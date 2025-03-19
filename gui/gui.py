@@ -5,26 +5,39 @@ import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog
 
-from generate_tls_cert import generate_tls_cert, resource_path
-from server import TCPServer, TLSServer
+from server.server import TCPServer, TLSServer
 
 
 class ServerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("TCP/TLS 服务器")
-        self.root.geometry("800x600")
+        # 窗口居中显示
+        self.center_window(800, 600)  # 假设窗口大小是800x600
         self.root.resizable(True, True)
-
         self.server = None
         self.server_thread = None
         self.client_sockets = {}  # {client_address: client_handler}
-
+        # 添加证书基础目录
+        # 修改证书基础目录，与generate_tls_cert保持一致
+        self.cert_base_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'TCP服务器', 'certificates')
+        if not os.path.exists(self.cert_base_dir):
+            os.makedirs(self.cert_base_dir)
         # 创建界面元素
         self._create_widgets()
 
         # 关闭窗口时的处理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def center_window(self, width, height):
+        """将窗口放置在屏幕中央"""
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
 
     def _create_widgets(self):
         # 创建标签框架
@@ -65,6 +78,8 @@ class ServerGUI:
         if local_ips:
             self.ip_combo["values"] = local_ips
             self.ip_var.set(local_ips[0])
+        # 2. 添加IP地址变更事件处理
+        self.ip_combo.bind('<<ComboboxSelected>>', self._on_ip_selected)
 
         # 服务器类型选择
         server_type_frame = ttk.Frame(left_frame)
@@ -75,15 +90,18 @@ class ServerGUI:
         ttk.Radiobutton(server_type_frame, text="TCP", variable=self.server_type,
                         value="TCP").pack(side=tk.LEFT, padx=10)
         ttk.Radiobutton(server_type_frame, text="TLS", variable=self.server_type,
-                        value="TLS", command=self._toggle_tls_fields).pack(side=tk.LEFT, padx=10)
+                        value="TLS", command=self._on_server_type_changed).pack(side=tk.LEFT, padx=10)
 
         # TLS证书配置区
         self.tls_frame = ttk.LabelFrame(left_frame, text="TLS配置")
         self.tls_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # 生成证书按钮
-        self.gen_cert_button = ttk.Button(self.tls_frame, text="生成自签名证书",
-                                          command=lambda: generate_tls_cert(self))
+        # 4. 修改生成证书按钮的回调函数
+        self.gen_cert_button = ttk.Button(
+            self.tls_frame,
+            text="生成自签名证书",
+            command=self._generate_certificate_for_ip)
         self.gen_cert_button.pack(fill=tk.X, padx=5, pady=5)
 
         # 证书路径
@@ -92,25 +110,19 @@ class ServerGUI:
 
         ttk.Label(cert_frame, text="证书路径:").pack(side=tk.LEFT)
         self.cert_path_var = tk.StringVar()
-        ttk.Entry(cert_frame, textvariable=self.cert_path_var).pack(side=tk.LEFT,
-                                                                    fill=tk.X, expand=True)
+        ttk.Entry(cert_frame, textvariable=self.cert_path_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(cert_frame, text="浏览",
-                   command=lambda: self.cert_path_var.set(
-                       filedialog.askopenfilename(filetypes=[("PEM文件", "*.pem")])
-                   )).pack(side=tk.RIGHT)
+                   command=self._browse_cert_file).pack(side=tk.RIGHT)
 
-        # 私钥路径
+        # 6. 修改私钥路径浏览按钮
         key_frame = ttk.Frame(self.tls_frame)
         key_frame.pack(fill=tk.X, padx=5, pady=5)
 
         ttk.Label(key_frame, text="私钥路径:").pack(side=tk.LEFT)
         self.key_path_var = tk.StringVar()
-        ttk.Entry(key_frame, textvariable=self.key_path_var).pack(side=tk.LEFT,
-                                                                  fill=tk.X, expand=True)
+        ttk.Entry(key_frame, textvariable=self.key_path_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(key_frame, text="浏览",
-                   command=lambda: self.key_path_var.set(
-                       filedialog.askopenfilename(filetypes=[("PEM文件", "*.pem")])
-                   )).pack(side=tk.RIGHT)
+                   command=self._browse_key_file).pack(side=tk.RIGHT)
 
         # 默认关闭TLS配置
         self.tls_frame.pack_forget()
@@ -299,28 +311,27 @@ class ServerGUI:
                 messagebox.showerror("错误", "无效的端口号。端口必须在1-65535之间。")
                 return
 
-            # 验证TLS参数（如果需要）
-            cert_path = None
-            key_path = None
-
             if server_type == "TLS":
-                cert_path = self.cert_path_var.get()
-                key_path = self.key_path_var.get()
+                cert_file = self.cert_path_var.get()
+                key_file = self.key_path_var.get()
 
-                if not cert_path or not os.path.isfile(cert_path):
-                    messagebox.showerror("错误", "未指定有效的TLS证书路径。")
+                # 检查证书文件是否存在
+                if not os.path.isfile(cert_file):
+                    self.log(f"错误: 找不到证书文件: {cert_file}")
+                    messagebox.showerror("错误", f"找不到证书文件: {cert_file}")
                     return
 
-                if not key_path or not os.path.isfile(key_path):
-                    messagebox.showerror("错误", "未指定有效的TLS私钥路径。")
+                if not os.path.isfile(key_file):
+                    self.log(f"错误: 找不到密钥文件: {key_file}")
+                    messagebox.showerror("错误", f"找不到密钥文件: {key_file}")
                     return
+
                 # 创建 SSL 上下文
                 ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
                 # 显式配置只支持TLS 1.2和TLS 1.3 (如果您的Python版本支持)
                 ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-                # ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
-                ssl_context.load_cert_chain(certfile=resource_path("cert.pem"),
-                                            keyfile=resource_path("key.pem"))
+                # 使用实际的证书文件路径
+                ssl_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
                 self.server = TLSServer(
                     ssl_context=ssl_context,
                     host=ip,
@@ -446,6 +457,81 @@ class ServerGUI:
                 self.root.destroy()
         else:
             self.root.destroy()
+    def _on_ip_selected(self, event=None):
+        """当IP地址变更时调用，自动查找对应的证书"""
+        if self.server_type.get() == "TLS":
+            selected_ip = self.ip_var.get()
+            self._update_cert_paths_for_ip(selected_ip)
+
+
+    def _on_server_type_changed(self):
+        """当服务器类型变更时调用"""
+        is_tls = self.server_type.get() == "TLS"
+        self._toggle_tls_fields()  # 使用现有的方法切换TLS字段显示
+        # 如果选择TLS服务器，自动查找证书
+        if is_tls:
+            selected_ip = self.ip_var.get()
+            self._update_cert_paths_for_ip(selected_ip)
+
+    def _update_cert_paths_for_ip(self, ip):
+        """根据IP地址更新证书和密钥路径"""
+        if not ip:
+            return
+        # 使用与generate_tls_cert.py相同的路径逻辑
+        data_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'TCP服务器', 'certificates')
+        ip_filename = ip.replace('.', '_')
+        # 检查是否存在证书文件
+        cert_file = os.path.join(data_dir, f"cert_{ip_filename}.pem")
+        key_file = os.path.join(data_dir, f"key_{ip_filename}.pem")
+        # 如果文件存在，自动设置路径
+        if os.path.isfile(cert_file):
+            self.cert_path_var.set(cert_file)
+
+        if os.path.isfile(key_file):
+            self.key_path_var.set(key_file)
+
+
+    def _browse_cert_file(self):
+        """浏览证书文件，默认打开当前IP对应目录"""
+        # 使用与generate_tls_cert.py相同的基础目录
+        data_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'TCP服务器', 'certificates')
+        # 确保目录存在
+        os.makedirs(data_dir, exist_ok=True)
+        filename = filedialog.askopenfilename(
+            initialdir=data_dir,
+            title="选择证书文件",
+            filetypes=[("PEM文件", "*.pem"), ("所有文件", "*.*")]
+        )
+        if filename:
+            self.cert_path_var.set(filename)
+
+
+    def _browse_key_file(self):
+        """浏览密钥文件，默认打开当前IP对应目录"""
+        data_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'TCP服务器', 'certificates')
+        # 确保目录存在
+        os.makedirs(data_dir, exist_ok=True)
+
+        filename = filedialog.askopenfilename(
+            initialdir=data_dir,
+            title="选择密钥文件",
+            filetypes=[("PEM文件", "*.pem"), ("所有文件", "*.*")]
+        )
+        if filename:
+            self.key_path_var.set(filename)
+
+    def _generate_certificate_for_ip(self):
+        """为当前选择的IP生成证书"""
+        selected_ip = self.ip_var.get()
+        if not selected_ip:
+            messagebox.showerror("错误", "请先选择IP地址")
+            return
+        try:
+            # 调用已有的证书生成函数 - 传递self对象
+            from security.generate_tls_cert import generate_tls_cert
+            generate_tls_cert(self)
+        except Exception as e:
+            messagebox.showerror("错误", f"生成证书时出错: {str(e)}")
 
 
 def run_gui():

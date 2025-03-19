@@ -17,7 +17,7 @@ def resource_path(relative_path):
     except Exception:
         # 如果 sys._MEIPASS 不存在（普通 Python 运行环境），
         # 则使用当前目录作为基础路径
-        base_path = os.path.abspath(".")
+        base_path = os.path.abspath("..")
 
     return os.path.join(base_path, relative_path)
 
