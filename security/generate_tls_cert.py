@@ -8,6 +8,12 @@ from cryptography import x509
 from cryptography.hazmat._oid import NameOID
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
+import os
+import subprocess
+import socket
+import ipaddress
+import tempfile
+from datetime import datetime, timedelta
 
 
 def resource_path(relative_path):
@@ -100,3 +106,4 @@ def generate_tls_cert(self):
     except Exception as e:
         self.log(f"生成TLS证书失败: {str(e)}")
         messagebox.showerror("错误", f"生成TLS证书失败: {str(e)}")
+

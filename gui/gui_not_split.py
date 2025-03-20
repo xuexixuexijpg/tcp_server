@@ -4,6 +4,9 @@ import ssl
 import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog
+# 在文件顶部导入部分添加:
+from gui.certificate_dialog import CertificateGenerationDialog
+import os  # 确保这一行存在，用于处理文件路径
 
 from server.server import TCPServer, TLSServer
 

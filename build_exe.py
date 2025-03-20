@@ -91,7 +91,7 @@ prepare_output_dir("dist")
 prepare_output_dir("build")
 
 # 设置主程序文件
-main_file = 'mian.py'
+main_file = 'main.py'
 
 # 检查主文件是否存在
 if not os.path.exists(main_file):

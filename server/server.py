@@ -1,4 +1,3 @@
-# server.py
 import socket
 import threading
 import time
@@ -11,7 +10,7 @@ class BaseServer:
     def __init__(self, host, port, backlog=5, timeout=1.0,
                  log_callback=None, client_connected_callback=None,
                  client_disconnected_callback=None, message_received_callback=None):
-        self.host = host
+        self.host = str(host)  # 确保 host 是字符串
         self.port = port
         self.backlog = backlog
         self.timeout = timeout
@@ -83,7 +82,7 @@ class TCPServer(BaseServer):
 
     def start(self):
         """启动TCP服务器"""
-        from client_handler import handle_client_tcp
+        from .client_handler import handle_client_tcp
 
         self.setup_server()
         self.running = True
@@ -149,7 +148,7 @@ class TCPServer(BaseServer):
 class TLSServer(BaseServer):
     """TLS服务器实现"""
 
-    def __init__(self, ssl_context, host, port, backlog=5, timeout=1.0,
+    def __init__(self, host, port, ssl_context, backlog=5, timeout=1.0,
                  log_callback=None, client_connected_callback=None,
                  client_disconnected_callback=None, message_received_callback=None):
         super().__init__(host, port, backlog, timeout,
@@ -158,9 +157,21 @@ class TLSServer(BaseServer):
         self.ssl_context = ssl_context
         self.client_sockets = {}
 
+    def setup_server(self):
+        """设置TLS服务器socket"""
+        # 先创建普通的socket
+        plain_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        plain_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        plain_socket.bind((self.host, self.port))
+        plain_socket.listen(self.backlog)
+        plain_socket.settimeout(self.timeout)
+
+        # 不需要在这里包装SSL，接受连接后再包装
+        self.server_socket = plain_socket
+
     def start(self):
         """启动TLS服务器"""
-        from client_handler import handle_client_tls
+        from .client_handler import handle_client_tls
 
         self.setup_server()
         self.running = True
