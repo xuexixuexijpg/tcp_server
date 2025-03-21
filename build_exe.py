@@ -8,6 +8,22 @@ import shutil
 
 #在终端中直接输入即可生成exe  python build_exe.py
 
+# 清理先前的构建文件
+print("清理之前的构建文件...")
+if os.path.exists("dist"):
+    shutil.rmtree("dist")
+if os.path.exists("build"):
+    shutil.rmtree("build")
+
+# 删除当前目录中的 exe 文件
+for file in os.listdir("."):
+    if file.endswith(".exe"):
+        try:
+            os.remove(file)
+            print(f"已删除: {file}")
+        except Exception as e:
+            print(f"无法删除 {file}: {e}")
+
 def create_shortcut(exe_path, shortcut_path):
     try:
         import win32com.client

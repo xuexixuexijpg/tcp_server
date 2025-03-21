@@ -1,0 +1,48 @@
+name: 构建 Windows 可执行文件
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest  # 在 Windows 环境中运行，因为我们需要构建 Windows exe
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 设置 Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'  # 使用与您项目相匹配的 Python 版本
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pillow  # 根据您之前的信息安装依赖
+          # 如果有 requirements.txt 文件，也可以使用:
+          # pip install -r requirements.txt
+
+      - name: 清理之前生成的 exe 文件
+        run: |
+          if exist "dist" rmdir /s /q "dist"
+          if exist "build" rmdir /s /q "build"
+          # 删除可能存在的其他 exe 文件
+          del /f /q *.exe 2>nul || echo 没有找到 exe 文件
+
+      - name: 运行构建脚本
+        run: python build_exe.py
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v3
+        with:
+          name: tcp-server-exe
+          path: |
+            dist/**/*.exe
+            *.exe
+          if-no-files-found: error  # 如果没有找到 exe 文件则报错
