@@ -1,4 +1,12 @@
-cryptography~=44.0.2
-pyinstaller~=6.12.0
-winshell~=0.6
-pywin32; platform_system == "Windows"
+# 基本依赖
+pillow
+pyinstaller==6.6.0  # 使用最新的稳定版本
+pywin32; sys_platform == 'win32'  # Windows 特定依赖
+
+# 加密和安全依赖
+pyOpenSSL>=24.0.0
+cryptography>=42.0.0
+
+# 可能需要的其他依赖
+pefile; sys_platform == 'win32'  # Windows PE文件支持
+setuptools  # 一些 PyInstaller 功能可能需要

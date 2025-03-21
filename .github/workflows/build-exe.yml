@@ -24,7 +24,7 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install pillow
+          pip install -r requirements.txt
 
       - name: 清理之前生成的 exe 文件
         run: |
