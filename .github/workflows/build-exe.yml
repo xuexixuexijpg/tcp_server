@@ -39,7 +39,7 @@ jobs:
         run: python build_exe.py
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4  # 这里从 v3 改为 v4
         with:
           name: tcp-server-exe
           path: |
