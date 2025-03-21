@@ -443,10 +443,11 @@ class ServerWindow(BaseWindow):
 
         try:
             client_socket, _ = self.client_sockets[client_id]
-
-            # 发送消息
-            client_socket.sendall(message.encode('utf-8'))
-
+            #  直接发送二进制数据，不进行编码
+            if isinstance(message, str):
+                # 兼容处理，如果输入是字符串，转换为bytes
+                binary_data = message.encode('utf-8')
+            client_socket.sendall(message)
             # 记录日志
             now = datetime.now().strftime("%H:%M:%S")
             self.messaging_panel.receive_message(f"[{now}] 发送到 {client_id}: {message}")
