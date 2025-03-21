@@ -434,34 +434,42 @@ class ServerWindow(BaseWindow):
 
     def send_to_client(self, client_id, message):
         """发送消息到指定客户端"""
+            # 首先打印客户端ID和客户端套接字字典，帮助调试
+        print(f"正在尝试发送消息到客户端: {client_id}")
+        print(f"客户端套接字字典键: {list(self.client_sockets.keys())}")
+
+        # 确认客户端ID存在
         if client_id not in self.client_sockets:
-            self.log(f"客户端 {client_id} 不存在", "ERROR")
+            self.log(f"错误：找不到客户端 {client_id}")
             return False
 
-        if not message:
+        # 获取套接字并验证类型
+        client_socket = self.client_sockets[client_id]
+        print(f"客户端套接字类型: {type(client_socket)}")
+
+        # 检查是否为有效的套接字对象
+        import socket
+        import ssl
+        if not isinstance(client_socket, (socket.socket, ssl.SSLSocket)):
+            self.log(f"错误：客户端 {client_id} 的连接对象不是有效的套接字，而是 {type(client_socket)}")
+            self.remove_client(client_id)
             return False
 
+        # 发送消息
         try:
-            client_socket, _ = self.client_sockets[client_id]
-            #  直接发送二进制数据，不进行编码
-            if isinstance(message, str):
-                # 兼容处理，如果输入是字符串，转换为bytes
-                binary_data = message.encode('utf-8')
-            client_socket.sendall(message)
-            # 记录日志
-            now = datetime.now().strftime("%H:%M:%S")
-            self.messaging_panel.receive_message(f"[{now}] 发送到 {client_id}: {message}")
+            # 根据数据类型处理
+            if isinstance(message, bytes):
+                data_to_send = message
+            else:
+                data_to_send = message.encode('utf-8')
 
+            client_socket.sendall(data_to_send)
             return True
-
         except Exception as e:
-            self.log(f"发送消息到 {client_id} 失败: {str(e)}", "ERROR")
-
-            # 如果是连接断开，删除客户端
-            if isinstance(e, (ConnectionResetError, BrokenPipeError)):
-                self.remove_client(client_id)
-
+            self.log(f"发送消息到 {client_id} 失败: {e}")
+            self.remove_client(client_id)
             return False
+
 
     def send_to_all_clients(self, message):
         """发送消息到所有客户端"""

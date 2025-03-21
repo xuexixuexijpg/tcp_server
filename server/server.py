@@ -171,8 +171,8 @@ class TLSServer(BaseServer):
 
     def start(self):
         """启动TLS服务器"""
+        import ssl
         from .client_handler import handle_client_tls
-
         self.setup_server()
         self.running = True
         self.log(f"TLS服务端已启动，监听 {(self.host, self.port)}...")
@@ -185,18 +185,37 @@ class TLSServer(BaseServer):
                     client_id = f"{addr[0]}:{addr[1]}"
                     self.log(f"接受来自 {addr} 的连接")
 
-                    # 为每个客户端创建新线程处理
-                    client_thread = threading.Thread(
-                        target=handle_client_tls,
-                        args=(client_socket, addr, self.ssl_context, self)
-                    )
-                    client_thread.daemon = True
-                    client_thread.start()
-                    self.active_threads.append(client_thread)
+                    try:
+                        # 直接在这里进行 TLS 握手，而不是在单独的线程中
+                        client_socket.settimeout(5)  # 设置较短的超时时间用于握手
+                        tls_socket = self.ssl_context.wrap_socket(
+                            client_socket,
+                            server_side=True
+                        )
+                        # 恢复原始超时设置
+                        tls_socket.settimeout(self.timeout)
 
-                    # 通知UI有新客户端连接
-                    if self.client_connected_callback:
-                        self.client_connected_callback(client_id, addr)
+                        # 注册客户端套接字
+                        self.register_client_socket(tls_socket, client_id)
+
+                        # 为每个客户端创建新线程处理
+                        client_thread = threading.Thread(
+                            target=handle_client_tls,
+                            args=(tls_socket, addr, self.ssl_context, self)
+                        )
+                        client_thread.daemon = True
+                        client_thread.start()
+                        self.active_threads.append(client_thread)
+                        # 通知UI有新客户端连接
+                        if self.client_connected_callback:
+                                self.client_connected_callback(client_id, addr)
+                    except ssl.SSLError as e:
+                        # 捕获 TLS 握手失败
+                        self.log(f"TLS 握手失败，拒绝来自 {addr} 的连接: {e}")
+                        client_socket.close()
+                    except Exception as e:
+                        self.log(f"处理客户端 {addr} 时发生错误: {e}")
+                        client_socket.close()
 
                     # 清理已完成的线程
                     self.active_threads = [t for t in self.active_threads if t.is_alive()]
@@ -211,20 +230,56 @@ class TLSServer(BaseServer):
         finally:
             self.shutdown()
 
-    def send_to_client(self, client_addr, message):
+    def send_to_client(self, client_id, message):
         """向指定客户端发送消息"""
+        import ssl
+        if client_id not in self.client_sockets:
+            self.log(f"发送失败：找不到客户端 {client_id}")
+            return False
+
+        client_socket = self.client_sockets[client_id]
+
+        # 添加类型检查
+        if not isinstance(client_socket, ssl.SSLSocket):
+            self.log(f"发送失败：客户端 {client_id} 的连接对象不是有效的 TLS 套接字 ({type(client_socket)})")
+            self.remove_client(client_id)
+            return False
+
         try:
-            ssl_socket = self.client_sockets.get(client_addr)
-            if ssl_socket:
-                ssl_socket.send(message.encode('utf-8'))
-                return True
+            # 准备发送数据
+            if isinstance(message, str):
+                message = message.encode('utf-8')
+
+            # 发送数据
+            client_socket.sendall(message)
+            return True
+
+        except (BrokenPipeError, ConnectionResetError) as e:
+            self.log(f"发送失败：连接已断开 {client_id}: {e}")
+            self.remove_client(client_id)
             return False
-        except:
+
+        except Exception as e:
+            self.log(f"发送失败：向 {client_id} 发送消息时出错: {e}")
             return False
+
 
     def register_client_socket(self, client_id, ssl_socket):
         """注册客户端SSL套接字"""
+        import ssl
+        # 验证是否为有效的 SSL 套接字
+        if not isinstance(ssl_socket, ssl.SSLSocket):
+            self.log(f"错误：尝试注册非 TLS 套接字，客户端 {client_id}")
+            if hasattr(ssl_socket, 'close'):
+                ssl_socket.close()
+            return False
+        # 将客户端添加到字典
         self.client_sockets[client_id] = ssl_socket
+
+        # 调用回调通知新客户端连接 (如果需要的话)
+        # 注意：此方法中不调用回调，因为上面start中已经调用了
+        self.log(f"客户端已注册: {client_id}")
+        return True
 
     def remove_client(self, client_id):
         """移除客户端连接"""
