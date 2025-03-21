@@ -1,4 +1,4 @@
-name: 构建 Windows 可执行文件
+name: 构建并发布 Windows 可执行文件
 
 on:
   push:
@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write  # 提供写入仓库内容的权限，用于创建 Release
 
     steps:
       - name: 检出代码
@@ -42,11 +44,30 @@ jobs:
           PYTHONIOENCODING: utf-8
           PYTHONUTF8: 1
 
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+      # 删除旧的 Release
+      - name: 删除旧版本 Releases
+        uses: dev-drprasad/delete-older-releases@v0.3.2
         with:
-          name: tcp-server-exe
-          path: |
+          keep_latest: 0  # 删除所有已存在的 Release
+          delete_tags: true  # 同时删除标签
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 创建新的 Release
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest  # 使用固定标签 'latest'
+          name: TCP Server 最新版本
+          body: |
+            构建时间: ${{ github.event.repository.updated_at }}
+            提交: ${{ github.sha }}
+            
+            由 GitHub Actions 自动构建的最新版本
+          files: |
             dist/**/*.exe
             *.exe
-          if-no-files-found: error
+          prerelease: false
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
