@@ -1,11 +1,11 @@
 # 基本依赖
 pillow
-pyinstaller==6.6.0  # 使用最新的稳定版本
+pyinstaller==6.12.0  # 使用实际存在的最新版本
 pywin32; sys_platform == 'win32'  # Windows 特定依赖
 
 # 加密和安全依赖
-pyOpenSSL>=24.0.0
-cryptography>=42.0.0
+pyOpenSSL>=23.0.0
+cryptography>=39.0.0
 
 # 可能需要的其他依赖
 pefile; sys_platform == 'win32'  # Windows PE文件支持
