@@ -2,31 +2,19 @@ name: Build and Release
 
 on:
   push:
-    tags:
-      - 'v*'
-    branches:
-      - master  # 添加分支触发
-  pull_request:
     branches:
       - master
-  workflow_dispatch:  # 允许手动触发
-    inputs:
-      version:
-        description: 'Release version'
-        required: true
-        default: 'v1.0.0'
+  workflow_dispatch:  # Keep manual trigger option
 
 jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write  # 添加写入权限
+      contents: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 0  # 获取完整历史记录
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -55,39 +43,28 @@ jobs:
           PYTHONIOENCODING: utf-8
           PYTHONUTF8: 1
 
-      - name: Get release version
-        id: get_version
+      - name: Generate version
+        id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
+          echo "build_version=v$(date +'%Y%m%d.%H%M')" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.get_version.outputs.version }}
-          name: TCP Server Release ${{ steps.get_version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.build_version }}
+          name: TCP Server ${{ steps.version.outputs.build_version }}
           body: |
-            TCP Server Release
+            Automated build from master branch
             
             Build Time: ${{ github.event.repository.updated_at }}
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref_name }}
             
-            **Changes in this release:**
+            **Changes:**
             ${{ github.event.head_commit.message }}
           files: release/*.zip
           draft: false
           prerelease: false
-          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: TCP-Server-Build
-          path: release/*.zip
