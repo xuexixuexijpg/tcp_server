@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
+import os
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 
 class ClientManagerPanel(ttk.Frame):
@@ -36,6 +36,12 @@ class ClientManagerPanel(ttk.Frame):
 
         ttk.Button(button_frame, text="发送消息", command=self._open_message_dialog).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="断开连接", command=self._disconnect_client).pack(side=tk.LEFT, padx=5)
+        # 添加插件按钮
+        ttk.Button(
+            button_frame,
+            text="选择插件",
+            command=self._select_plugin
+        ).pack(side=tk.LEFT, padx=5)
 
     def add_client(self, client_id, address):
         """添加客户端到列表"""
@@ -69,3 +75,26 @@ class ClientManagerPanel(ttk.Frame):
         client_id = self.get_selected_client()
         if client_id and messagebox.askyesno("确认", f"确定要断开客户端 {client_id} 的连接吗?"):
             self.server_window.remove_client(client_id)
+
+    def _select_plugin(self):
+        """为选中的客户端选择插件"""
+        client_id = self.get_selected_client()
+        if not client_id:
+            return
+
+        # 打开文件选择对话框
+        plugin_path = filedialog.askopenfilename(
+            title="选择插件文件",
+            filetypes=[("Python文件", "*.py")],
+            initialdir=os.path.join(os.path.dirname(__file__), "../plugins")
+        )
+
+        if plugin_path:
+            # 加载插件
+            plugin_name = self.server_window.plugin_manager.load_plugin(plugin_path)
+            if plugin_name:
+                # 设置客户端插件
+                if self.server_window.plugin_manager.set_client_plugin(client_id, plugin_name):
+                    messagebox.showinfo("成功", f"已为客户端 {client_id} 设置插件 {plugin_name}")
+                else:
+                    messagebox.showerror("错误", "设置插件失败")

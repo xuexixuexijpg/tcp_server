@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package server_messages;
+
+message BaseMessage {
+  string type = 1;       // 消息类型
+  bytes data = 2;        // 消息数据
+  int64 timestamp = 3;   // 时间戳
+}

@@ -3,6 +3,8 @@ import threading
 import time
 import ssl
 
+from plugins.base import PluginManager
+
 
 class BaseServer:
     """服务器基类"""
@@ -24,6 +26,7 @@ class BaseServer:
         self.client_connected_callback = client_connected_callback
         self.client_disconnected_callback = client_disconnected_callback
         self.message_received_callback = message_received_callback
+        self.plugin_manager = PluginManager()
 
     def log(self, message):
         """记录日志"""
@@ -67,6 +70,42 @@ class BaseServer:
         """向指定客户端发送消息"""
         raise NotImplementedError("子类必须实现send_to_client方法")
 
+    def process_message(self, client_socket, address, data):
+        """处理收到的消息"""
+        client_id = f"{address[0]}:{address[1]}"
+
+        try:
+            # 当没有配置插件时，直接显示原始数据
+            if not hasattr(self, 'plugin_manager') or not self.plugin_manager.client_plugins.get(client_id):
+                # 尝试解码为字符串，如果失败则显示十六进制
+                try:
+                    display_data = data.decode('utf-8')
+                except UnicodeDecodeError:
+                    display_data = f"HEX: {data.hex()}"
+
+                if self.message_received_callback:
+                    self.message_received_callback(client_socket, address, display_data)
+                return
+
+            # 使用插件处理数据
+            display_data = self.plugin_manager.process_data(
+                client_id, data, 'incoming'
+            )
+
+            # 通知UI显示消息
+            if self.message_received_callback:
+                self.message_received_callback(client_socket, address, str(display_data))
+
+            # 处理要发送的响应数据
+            response_data = self.plugin_manager.process_data(
+                client_id, data, 'outgoing'
+            )
+
+            # 发送响应数据
+            if response_data and response_data != data:
+                self.send_to_client(client_id, response_data)
+        except Exception as e:
+            self.log(f"处理消息时出错: {str(e)}")
 
 class TCPServer(BaseServer):
     """TCP服务器实现"""
@@ -203,7 +242,8 @@ class TLSServer(BaseServer):
                             server_side=True
                         )
                         # 恢复原始超时设置
-                        tls_socket.settimeout(self.timeout)
+                        # tls_socket.settimeout(self.timeout)
+                        tls_socket.settimeout(None) # 永不超时
 
                         # 注册客户端套接字
                         self.register_client_socket(tls_socket, client_id)

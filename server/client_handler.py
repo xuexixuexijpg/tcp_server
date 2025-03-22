@@ -16,9 +16,8 @@ def handle_client_tls(tls_socket, addr, context, server):
                 if not data:
                     break
 
-                # 处理接收到的消息
-                if server.message_received_callback:
-                    server.message_received_callback(client_id, data)
+                # 使用新的消息处理方法
+                server.process_message(tls_socket, addr, data)
 
             except ssl.SSLError as e:
                 server.log(f"TLS 连接错误 {client_id}: {e}")
@@ -26,7 +25,8 @@ def handle_client_tls(tls_socket, addr, context, server):
             except Exception as e:
                 server.log(f"处理客户端 {client_id} 消息时出错: {e}")
                 break
-
+        # 处理断开连接
+        # server.client_disconnected_callback(client_id)
     except Exception as e:
         server.log(f"客户端线程发生异常 {client_id}: {e}")
     finally:
@@ -48,17 +48,15 @@ def handle_client_tcp(client_socket, addr, server):
                 data = client_socket.recv(1024)
                 if not data:
                     break
-
-                message = data.decode('utf-8', errors='replace')
-                server.log(f"从 {addr} 收到数据: {message}")
-
-                if server.message_received_callback:
-                    server.message_received_callback(f"[{client_id}] {message}")
+                # 使用新的消息处理方法
+                server.process_message(client_socket, addr, data)
             except socket.timeout:
                 continue
             except:
                 break
 
+        # 处理断开连接
+        # server.client_disconnected_callback(client_id)
     except socket.timeout:
         server.log(f"与 {addr} 的连接超时")
     except ConnectionResetError:

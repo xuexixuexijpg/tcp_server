@@ -311,9 +311,9 @@ class ServerWindow(BaseWindow):
                 # 在主线程中更新UI
                 self.root.after(500, lambda: finish_generation(result))
 
-            except Exception as e:
+            except Exception as b:
                 # 修复这一行 - 将 e 作为 lambda 的默认参数传递
-                self.root.after(0, lambda e=e: handle_error(str(e)))
+                self.root.after(0, lambda e = b: handle_error(str(e)))
 
         # 完成生成后的处理
         def finish_generation(result):
@@ -540,6 +540,16 @@ class ServerWindow(BaseWindow):
             client_socket, _ = self.client_sockets[client_id]
 
             try:
+                # 先发送断开连接的消息给客户端
+                disconnect_message = json.dumps({
+                    "type": "disconnect",
+                    "message": "Server closing connection"
+                })
+                client_socket.sendall(disconnect_message.encode('utf-8'))
+                # 等待一小段时间让客户端处理消息
+                time.sleep(0.1)
+                # 关闭连接
+                client_socket.shutdown(socket.SHUT_RDWR)
                 client_socket.close()
             except:
                 pass
