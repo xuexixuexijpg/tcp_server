@@ -2,8 +2,8 @@ import tkinter as tk
 from tkinter import ttk
 
 
-class CertificateGenerationDialog:
-    """证书生成进度对话框"""
+class CertificateGenerationDialog(tk.Toplevel):
+    """证书生成对话框"""
 
     def __init__(self, parent, ip_address):
         """
@@ -13,59 +13,74 @@ class CertificateGenerationDialog:
             parent: 父窗口
             ip_address: 要生成证书的IP地址
         """
+        super().__init__(parent)
         self.parent = parent
         self.ip_address = ip_address
-        self.window = None
-        self.detail_label = None
-        self.progress_bar = None
 
-        # 创建并显示对话框
+        self.title("生成TLS证书")
+        self.transient(parent)
+        self.grab_set()
+        self.resizable(False, False)
+
+        # 结果变量
+        self.generate_client_cert = tk.BooleanVar(value=True)
+
+        # 创建对话框内容
         self._create_dialog()
-
-    def _create_dialog(self):
-        """创建进度对话框"""
-        # 创建进度窗口
-        self.window = tk.Toplevel(self.parent)
-        self.window.title("生成证书")
-        self.window.geometry("350x150")
-        self.window.resizable(False, False)
-        self.window.transient(self.parent)  # 设置为父窗口的子窗口
-        self.window.grab_set()  # 模态窗口
-
-        # 窗口居中
         self._center_window()
 
-        # 添加进度标签
-        progress_label = tk.Label(self.window, text=f"正在为 {self.ip_address} 生成证书...", font=("Arial", 10))
-        progress_label.pack(pady=(15, 5))
+    def _create_dialog(self):
+        """创建对话框内容"""
+        frame = ttk.Frame(self, padding="10")
+        frame.pack(fill="both", expand=True)
 
-        # 添加详细进度信息
-        self.detail_label = tk.Label(self.window, text="初始化...", font=("Arial", 9))
-        self.detail_label.pack(pady=5)
+        # 证书配置选项
+        ttk.Label(frame, text="IP地址:").grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text=self.ip_address).grid(row=0, column=1, sticky="w", pady=5)
 
-        # 添加进度条
-        self.progress_bar = ttk.Progressbar(self.window, mode="indeterminate")
-        self.progress_bar.pack(fill=tk.X, padx=20, pady=10)
-        self.progress_bar.start()
+        # 生成客户端证书选项
+        ttk.Checkbutton(
+            frame,
+            text="同时生成客户端证书（用于双向TLS认证）",
+            variable=self.generate_client_cert
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
+
+        # 解释说明
+        ttk.Label(
+            frame,
+            text="生成客户端证书可用于双向TLS认证，\n客户端需要安装证书才能连接到服务器。",
+            foreground="gray"
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=5)
+
+        # 按钮
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
+
+        ttk.Button(
+            button_frame,
+            text="生成证书",
+            command=self._confirm
+        ).pack(side="left", padx=5)
+
+        ttk.Button(
+            button_frame,
+            text="取消",
+            command=self.destroy
+        ).pack(side="left", padx=5)
 
     def _center_window(self):
         """将窗口居中显示"""
-        screen_width = self.parent.winfo_screenwidth()
-        screen_height = self.parent.winfo_screenheight()
-        window_width = 350
-        window_height = 150
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        self.window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        self.update_idletasks()
 
-    def update_progress(self, message):
-        """更新进度信息
+        width = 350
+        height = 200
 
-        参数:
-            message: 进度信息
-        """
-        self.detail_label.config(text=message)
+        x = self.parent.winfo_x() + (self.parent.winfo_width() // 2) - (width // 2)
+        y = self.parent.winfo_y() + (self.parent.winfo_height() // 2) - (height // 2)
 
-    def close(self):
-        """关闭对话框"""
-        self.window.destroy()
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _confirm(self):
+        """确认生成证书"""
+        # 简单关闭对话框，实际的生成操作在server_window中处理
+        self.destroy()

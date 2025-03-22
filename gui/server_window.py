@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 import ipaddress
 
+from security.generate_tls_cert import generate_tls_cert
 from .base_window import BaseWindow
 from .certificate_dialog import CertificateGenerationDialog
 from .tls_config_panel import TlsConfigPanel
@@ -19,7 +20,6 @@ from .client_manager_panel import ClientManagerPanel
 from .message_panel import MessagingPanel
 from .log_panel import LogPanel
 from server.server import TCPServer, TLSServer
-from security.generate_tls_cert import generate_tls_cert
 
 class ServerWindow(BaseWindow):
     def __init__(self):
@@ -70,7 +70,7 @@ class ServerWindow(BaseWindow):
 
         # 日志面板 (所有选项卡下方)
         self.log_panel = LogPanel(main_frame)
-        self.log_panel.pack(fill=tk.X, expand=False, pady=(10, 0))
+        self.log_panel.pack(fill=tk.BOTH, expand=False, pady=(10, 0))
 
     def _create_server_config(self, parent):
         """创建服务器配置面板"""
@@ -231,76 +231,119 @@ class ServerWindow(BaseWindow):
             self.key_path_var.set("")
             self.log(f"没有找到IP {ip}的证书，请生成或选择证书", "WARNING")
 
-    def _generate_certificate_for_ip(self, ip_address=None):
-        """为当前选择的IP生成新的证书"""
-        if not ip_address:
-            ip_address = self.ip_var.get()
-
-        if not ip_address:
-            messagebox.showerror("错误", "请先选择一个IP地址")
+    def _generate_certificate_for_ip(self):
+        selected_ip = self.ip_var.get()
+        if not selected_ip:
+            messagebox.showerror("错误", "请先选择IP地址")
             return
-        # 禁用生成按钮，防止重复点击
-        self.gen_cert_button.config(state=tk.DISABLED)
-        # 在状态栏显示进度
-        self.log(f"正在为 {ip_address} 生成证书，请稍候...")
-        # 创建证书生成对话框
-        dialog = CertificateGenerationDialog(self.root, ip_address)
 
-        # 设置超时处理
-        timeout_id = self.root.after(30000, lambda: self._cert_gen_timeout(dialog.window))
-            # 定义回调函数
-        def on_success(cert_file, key_file):
-            # 取消超时
-            self.root.after_cancel(timeout_id)
+        # 显示证书生成对话框
+        cert_dialog = CertificateGenerationDialog(self.root, selected_ip)
+        self.root.wait_window(cert_dialog)
 
-            # 关闭进度窗口
-            self.root.after(0, dialog.close)
+        # 如果用户关闭了对话框
+        if not hasattr(cert_dialog, 'generate_client_cert'):
+            return
 
-            # 更新UI
-            self.cert_path_var.set(cert_file)
-            self.key_path_var.set(key_file)
-            self.gen_cert_button.config(state=tk.NORMAL)
+        # 获取是否生成客户端证书的选项
+        generate_client_cert = cert_dialog.generate_client_cert.get()
 
-            # 更新日志
-            self.log(f"已为IP {ip_address} 生成TLS证书和私钥")
+        # 设置证书目录和路径
+        cert_dir = os.path.join(self.cert_base_dir, selected_ip)
+        os.makedirs(cert_dir, exist_ok=True)
 
-            # 显示成功消息
-            messagebox.showinfo("证书生成成功",
-                                f"TLS证书已保存到 {os.path.abspath(cert_file)}\n私钥已保存到 {os.path.abspath(key_file)}")
-        def on_error(error_message):
-            # 取消超时
-            self.root.after_cancel(timeout_id)
+        cert_path = os.path.join(cert_dir, f"{selected_ip}.crt")
+        key_path = os.path.join(cert_dir, f"{selected_ip}.key")
 
-            # 关闭进度窗口
-            self.root.after(0, dialog.close)
+        # 客户端证书路径（如果需要生成）
+        client_cert_path = os.path.join(cert_dir, "client.crt") if generate_client_cert else None
+        client_key_path = os.path.join(cert_dir, "client.key") if generate_client_cert else None
+        ca_cert_path = os.path.join(cert_dir, "ca.crt")
+        ca_key_path = os.path.join(cert_dir, "ca.key")
 
-            # 恢复UI状态
-            self.gen_cert_button.config(state=tk.NORMAL)
+        # 创建并显示进度对话框
+        progress_dialog = tk.Toplevel(self.root)
+        progress_dialog.title("生成证书")
+        progress_dialog.transient(self.root)
+        progress_dialog.grab_set()
+        progress_dialog.resizable(False, False)
+        # 添加以下代码使弹窗居中
+        progress_dialog.update_idletasks()
+        window_width = 300  # 设置窗口宽度
+        window_height = 100  # 设置窗口高度
+        x = (self.root.winfo_screenwidth() - window_width) // 2
+        y = (self.root.winfo_screenheight() - window_height) // 2
+        progress_dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
-            # 更新日志
-            self.log(f"生成TLS证书失败: {error_message}")
+        progress_label = tk.Label(progress_dialog, text=f"正在为 {selected_ip} 生成证书...", font=("Arial", 10))
+        progress_label.pack(pady=(15, 5))
 
-            # 显示错误消息
-            messagebox.showerror("错误", f"生成TLS证书失败: {error_message}")
+        detail_label = tk.Label(progress_dialog, text="初始化...", font=("Arial", 9))
+        detail_label.pack(pady=5)
 
-        def on_progress(message):
-            # 更新进度信息
-            self.root.after(0, lambda: dialog.update_progress(message))
-            # 启动证书生成线程
-        from security.cert_generator import generate_cert_for_ip
-        generate_cert_for_ip(
-            ip_address,
-            self.cert_base_dir,
-            on_success=on_success,
-            on_error=on_error,
-            on_progress=on_progress
-        )
-    def _cert_gen_timeout(self, window):
-        window.destroy()
-        self.gen_cert_button.config(state=tk.NORMAL)
-        self.log("生成证书超时，请重试")
-        messagebox.showerror("超时", "生成证书操作超时，请重试")
+        progress_bar = ttk.Progressbar(progress_dialog, mode="indeterminate")
+        progress_bar.pack(fill=tk.X, padx=20, pady=10)
+        progress_bar.start()
 
+        # 更新进度信息的函数
+        def update_progress(message):
+            detail_label.config(text=message)
+
+        # 证书生成线程
+        def generate_cert_thread():
+            try:
+                update_progress("正在生成证书...")
+
+                # 生成证书
+                result = generate_tls_cert(
+                    hostname=selected_ip,
+                    cert_path=cert_path,
+                    key_path=key_path,
+                    generate_client_cert=generate_client_cert,
+                    client_cert_path=client_cert_path,
+                    client_key_path=client_key_path,
+                    ca_cert_path=ca_cert_path,
+                    ca_key_path=ca_key_path
+                )
+
+                update_progress("证书生成完成！")
+
+                # 在主线程中更新UI
+                self.root.after(500, lambda: finish_generation(result))
+
+            except Exception as e:
+                # 修复这一行 - 将 e 作为 lambda 的默认参数传递
+                self.root.after(0, lambda e=e: handle_error(str(e)))
+
+        # 完成生成后的处理
+        def finish_generation(result):
+            progress_dialog.destroy()
+
+            # 更新证书路径
+            self.cert_path_var.set(result["cert_path"])
+            self.key_path_var.set(result["key_path"])
+
+            # 保存客户端证书路径（如果有）
+            if generate_client_cert:
+                self.client_cert_path = result.get("client_cert_path", "")
+                self.client_key_path = result.get("client_key_path", "")
+                self.ca_cert_path = result.get("ca_cert_path", "")
+
+                message = f"证书已成功生成！\n\n服务器证书: {result['cert_path']}\n服务器私钥: {result['key_path']}\n\n"
+                message += f"同时生成了客户端证书:\n客户端证书: {result['client_cert_path']}\n客户端私钥: {result['client_key_path']}\nCA证书: {result['ca_cert_path']}"
+
+                messagebox.showinfo("成功", message)
+            else:
+                messagebox.showinfo("成功",
+                                    f"证书已成功生成！\n\n证书路径: {result['cert_path']}\n私钥路径: {result['key_path']}")
+
+        # 错误处理
+        def handle_error(error_msg):
+            progress_dialog.destroy()
+            messagebox.showerror("错误", f"生成证书时发生错误：\n{error_msg}")
+
+        # 启动证书生成线程
+        threading.Thread(target=generate_cert_thread, daemon=True).start()
     def start_server(self):
         """启动服务器"""
         try:

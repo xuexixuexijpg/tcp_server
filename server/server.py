@@ -165,6 +165,16 @@ class TLSServer(BaseServer):
         plain_socket.bind((self.host, self.port))
         plain_socket.listen(self.backlog)
         plain_socket.settimeout(self.timeout)
+        # 设置最低 TLS 版本为 1.2
+        self.ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        # 禁用低版本 TLS
+        self.ssl_context.options |= ssl.OP_NO_TLSv1
+        self.ssl_context.options |= ssl.OP_NO_TLSv1_1
+        # 可选：设置首选加密套件
+        self.ssl_context.set_ciphers('ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256')
+        #启用证书验证：要求客户端提供证书（双向 TLS）
+        # self.ssl_context.verify_mode = ssl.CERT_REQUIRED
+        # self.ssl_context.load_verify_locations(cafile="ca.crt")
 
         # 不需要在这里包装SSL，接受连接后再包装
         self.server_socket = plain_socket

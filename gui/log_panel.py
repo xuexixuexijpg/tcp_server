@@ -15,7 +15,7 @@ class LogPanel(ttk.Frame):
 
     def _create_widgets(self):
         # 日志区域标题
-        label_frame = ttk.LabelFrame(self, text="日志")
+        label_frame = ttk.LabelFrame(self, text="服务器日志")
         label_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # 滚动条
