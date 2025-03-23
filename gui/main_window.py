@@ -2,6 +2,8 @@ import os
 import sys
 from tkinter import ttk
 import tkinter as tk
+
+from tools.lottie_converter.gui.converter_window import ConverterWindow
 from tools.tcp_server.gui.server_window import ServerWindow
 from gui.widgets.tool_card import ToolCard
 import uuid
@@ -14,7 +16,8 @@ class MainWindow:
         self.root.geometry("800x600")
         self.root.resizable(False, False)
         self.tool_windows = {
-            'tcp_server': []
+            'tcp_server': [],
+            'gif_converter': []
         }
         self._create_widgets()
         self.center_window()
@@ -58,12 +61,18 @@ class MainWindow:
             self.canvas.yview_scroll(1, "units")
 
     def _create_tool_cards(self):
-        icon_path = self._get_resource_path("resources/images/icons/tool_tcp.png")
         tools = [
             {
                 "title": "TCP/TLS Server",
                 "description": "支持插件的高级TCP/TLS 服务器",
-                "callback": self._open_tcp_server
+                "callback": self._open_tcp_server,
+                "icon_path": self._get_resource_path("resources/images/icons/tool_tcp.png")
+            },
+            {
+                "title": "Lottie转换",
+                "description": "将资源转换为Lottie格式，支持格式见lottie-py",
+                "callback": self._open_gif_converter,
+                "icon_path": self._get_resource_path("resources/images/icons/tool_an.png")
             }
         ]
 
@@ -72,7 +81,8 @@ class MainWindow:
             tools.append({
                 "title": f"Tool {i+1}",
                 "description": "Coming soon...",
-                "callback": lambda: print("Tool not implemented")
+                "callback": lambda: print("Tool not implemented"),
+                "icon_path": self._get_resource_path("resources/images/icons/tool_default.png")
             })
 
         # 计算列数（基于容器宽度）
@@ -88,7 +98,7 @@ class MainWindow:
                 self.scroll_frame,
                 title=tool["title"],
                 description=tool["description"],
-                icon_path=icon_path,
+                icon_path=tool["icon_path"],
                 callback=tool["callback"],
                 width=200,
                 height=250
@@ -130,6 +140,19 @@ class MainWindow:
         x = self.root.winfo_x() + 50 + len(self.tool_windows['tcp_server']) * 30
         y = self.root.winfo_y() + 50 + len(self.tool_windows['tcp_server']) * 30
         server_window.root.geometry(f"+{x}+{y}")
+
+
+    def _open_gif_converter(self):
+        """打开GIF转换器窗口"""
+        window_id = str(uuid.uuid4())
+        window_number = len(self.tool_windows['gif_converter']) + 1
+        converter_window = ConverterWindow(master=self.root, window_number=window_number)
+        self.tool_windows['gif_converter'].append((window_id, converter_window))
+
+        # 相对于主窗口定位新窗口
+        x = self.root.winfo_x() + 50 + len(self.tool_windows['gif_converter']) * 30
+        y = self.root.winfo_y() + 50 + len(self.tool_windows['gif_converter']) * 30
+        converter_window.root.geometry(f"+{x}+{y}")
 
     def center_window(self):
         """使窗口在屏幕中居中显示"""
