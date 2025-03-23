@@ -12,19 +12,24 @@ import time
 from datetime import datetime
 import ipaddress
 
+from core.base_window import BaseWindow
 from security.generate_tls_cert import generate_tls_cert
-from .base_window import BaseWindow
+
 from .certificate_dialog import CertificateGenerationDialog
 from .tls_config_panel import TlsConfigPanel
 from .client_manager_panel import ClientManagerPanel
 from .message_panel import MessagingPanel
 from .log_panel import LogPanel
-from server.server import TCPServer, TLSServer
+from ..core.server import TLSServer,TCPServer
+
 
 class ServerWindow(BaseWindow):
-    def __init__(self):
-        super().__init__(title="TCP服务器", geometry="900x600")
-
+    def __init__(self,master = None,window_number=None):
+        self.window_number = window_number
+        title = "TCP服务器"
+        if window_number is not None:
+            title = f"{title}-{window_number}"
+        super().__init__(master=master, title=title, geometry="900x600")
         # 服务器相关变量
         self.server = None
         self.server_thread = None
@@ -33,7 +38,9 @@ class ServerWindow(BaseWindow):
         # 创建证书目录
         self.cert_base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "certs")
         os.makedirs(self.cert_base_dir, exist_ok=True)
-
+        # 添加对主窗口关闭事件的监听
+        if master:
+            master.bind('<Destroy>', self._on_master_destroy)
         # 窗口初始化
         self._create_widgets()
         self.center_window()
@@ -76,7 +83,7 @@ class ServerWindow(BaseWindow):
         """创建服务器配置面板"""
         config_frame = ttk.LabelFrame(parent, text="服务器设置")
         config_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
+        self.server_type = tk.StringVar(value="普通TCP")
         # IP地址和端口设置
         ttk.Label(config_frame, text="IP地址:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.ip_var = tk.StringVar()
@@ -84,8 +91,6 @@ class ServerWindow(BaseWindow):
         # 获取本地IP列表
         local_ips = self._get_local_ips()
         self.ip_combo = ttk.Combobox(config_frame, textvariable=self.ip_var, values=local_ips)
-        # 服务器类型选择 - 提前定义
-        self.server_type = tk.StringVar(value="普通TCP")
 
         self.ip_combo.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
         if local_ips:
@@ -101,7 +106,7 @@ class ServerWindow(BaseWindow):
 
         # 服务器类型选择
         ttk.Label(config_frame, text="服务器类型:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.server_type = tk.StringVar(value="普通TCP")
+
 
         tcp_radio = ttk.Radiobutton(config_frame, text="普通TCP", variable=self.server_type, value="普通TCP",
                                     command=self._on_server_type_changed)
@@ -142,7 +147,7 @@ class ServerWindow(BaseWindow):
     def _toggle_tls_fields(self, show=False):
         """显示或隐藏TLS相关设置"""
         if show:
-            self.tls_frame.grid()
+            self.tls_frame.grid(row=2, column=0, columnspan=4, sticky=tk.W + tk.E, padx=5, pady=10)
             # 更新证书路径
             self._update_cert_paths_for_ip()
         else:
@@ -196,7 +201,8 @@ class ServerWindow(BaseWindow):
 
     def log(self, message, level="INFO"):
         """记录日志"""
-        self.log_panel.log(message, level)
+        prefix = f"[窗口-{self.window_number}] " if self.window_number else ""
+        self.log_panel.log(f"{prefix}{message}", level)
 
     def _on_ip_selected(self, event):
         """当IP选择变化时更新证书路径"""
@@ -238,7 +244,12 @@ class ServerWindow(BaseWindow):
             return
 
         # 显示证书生成对话框
+        # 使用主窗口或当前窗口作为父窗口
+        # parent = self.master if self.master else self.root
         cert_dialog = CertificateGenerationDialog(self.root, selected_ip)
+        # Make the dialog stay on top of ServerWindow
+        cert_dialog.transient(self.root)
+        cert_dialog.grab_set()
         self.root.wait_window(cert_dialog)
 
         # 如果用户关闭了对话框
@@ -416,30 +427,35 @@ class ServerWindow(BaseWindow):
             return
 
         try:
+            # 记录日志（在UI销毁前）
+            try:
+                self.log("正在停止服务器...")
+            except:
+                pass
+
             # 停止服务器
-            self.server.stop()
-
-            # 等待服务器线程结束
-            if self.server_thread and self.server_thread.is_alive():
-                self.server_thread.join(2.0)  # 等待最多2秒
-
-            # 断开所有客户端连接
-            clients = list(self.client_sockets.keys())
-            for client_id in clients:
-                self.remove_client(client_id, notify=False)
+            self._cleanup()
 
             # 清理资源
             self.server = None
             self.server_thread = None
 
-            # 更新UI状态
-            self.start_button.config(state=tk.NORMAL)
-            self.stop_button.config(state=tk.DISABLED)
-            self.ip_combo.config(state=tk.NORMAL)
-
+            # 如果UI组件仍然存在，更新状态
+            try:
+                if self.root.winfo_exists():
+                    self.start_button.config(state=tk.NORMAL)
+                    self.stop_button.config(state=tk.DISABLED)
+                    self.ip_combo.config(state=tk.NORMAL)
+                    self.log("服务器已停止")
+            except:
+                pass
             self.log("服务器已停止")
         except Exception as e:
-            self.log(f"停止服务器时出错: {str(e)}", "ERROR")
+            try:
+                if self.root.winfo_exists():
+                    self.log(f"停止服务器时出错: {str(e)}", "ERROR")
+            except:
+                print(f"停止服务器时出错: {str(e)}")
 
     def on_client_connected(self, client_socket, address):
         """当客户端连接时被调用"""
@@ -568,9 +584,10 @@ class ServerWindow(BaseWindow):
             self.log(f"移除客户端 {client_id} 时出错: {str(e)}", "ERROR")
 
     def on_closing(self):
-        """关闭窗口时的处理"""
+        """重写父类的关闭处理方法"""
+        window_id = f"窗口-{self.window_number}" if self.window_number else "窗口"
         if self.server:
-            if not messagebox.askokcancel("退出", "服务器正在运行，确定要关闭吗?"):
+            if not messagebox.askokcancel("退出", f"{window_id}服务器正在运行，确定要关闭吗?"):
                 return
             # 停止服务器
             self.stop_server()
@@ -585,3 +602,39 @@ class ServerWindow(BaseWindow):
         x = (self.root.winfo_screenwidth() // 2) - (width // 2)
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'{width}x{height}+{x}+{y}')
+
+    def _cleanup(self):
+        """清理资源"""
+        try:
+            # 停止服务器
+            if self.server:
+                self.server.stop()
+                self.server = None
+
+            # 等待服务器线程结束
+            if self.server_thread and self.server_thread.is_alive():
+                self.server_thread.join(2.0)
+                self.server_thread = None
+
+            # 断开所有客户端连接
+            for client_id in list(self.client_sockets.keys()):
+                try:
+                    client_socket, _ = self.client_sockets[client_id]
+                    client_socket.close()
+                except:
+                    pass
+
+            # 清理资源
+            self.client_sockets.clear()
+
+        except Exception as e:
+            print(f"清理资源时出错: {e}")
+
+    def _on_master_destroy(self, event):
+        """主窗口关闭时的处理"""
+        if event.widget == self.master:
+            try:
+                # 直接调用资源清理，不涉及UI更新
+                self._cleanup()
+            except Exception as e:
+                print(f"主窗口关闭时清理资源出错: {e}")

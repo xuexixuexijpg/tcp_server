@@ -3,7 +3,7 @@ import threading
 import time
 import ssl
 
-from plugins.base import PluginManager
+from tools.tcp_server.plugins.base import PluginManager
 
 
 class BaseServer:

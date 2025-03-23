@@ -46,21 +46,44 @@ def clean_dir(dir_name):
         except Exception as e:
             print(f"创建目录 {dir_name} 时发生错误: {str(e)}")
 
-def create_shortcut(exe_path, shortcut_path):
+def create_shortcut(exe_path, shortcut_path,working_dir,icon_path):
     """创建快捷方式"""
     try:
         import win32com.client
+        import tempfile
+        from PIL import Image
+        # 转换为绝对路径
+        exe_path = os.path.abspath(exe_path)
+        working_dir = os.path.abspath(working_dir)
+        # 在 _internal 目录中查找图标
+        # if getattr(sys, 'frozen', False):
+        #     # 打包后的路径
+        #     icon_path = os.path.join(sys._MEIPASS, 'resources', 'images', 'icons', 'app.png')
+        # else:
+            # 开发环境路径
+        icon_path = os.path.abspath(os.path.join('resources', 'images', 'icons', 'app.png'))
+
+        print(f"\n创建快捷方式:")
+        print(f"目标程序: {exe_path}")
+        print(f"工作目录: {working_dir}")
+        print(f"快捷方式: {shortcut_path}")
+        print(f"图标路径: {icon_path}")
+
         shell = win32com.client.Dispatch("WScript.Shell")
         shortcut = shell.CreateShortCut(shortcut_path)
-        shortcut.Targetpath = exe_path
-        shortcut.WorkingDirectory = os.path.dirname(exe_path)
+        shortcut.TargetPath = exe_path
+        shortcut.WorkingDirectory = working_dir
+        # if icon_path and os.path.exists(icon_path):
+        #     shortcut.IconLocation = icon_path
+        # else:
+        #     如果找不到图标文件，使用exe自身的图标
+            # shortcut.IconLocation = exe_path
         shortcut.save()
-        return True
-    except ImportError:
-        print("未能创建快捷方式：缺少 win32com 模块。请安装 pywin32：pip install pywin32")
-        return False
+        success = os.path.exists(shortcut_path)
+        return success
+
     except Exception as e:
-        print(f"创建快捷方式时出错：{e}")
+        print(f"创建快捷方式失败: {e}")
         return False
 
 def main():
@@ -90,12 +113,14 @@ def main():
         ])
 
         # 检查构建结果
-        dist_dir = os.path.join('dist', 'TCP服务器')
-        exe_path = os.path.join(dist_dir, 'TCP服务器.exe')
+        dist_dir = os.path.abspath(os.path.join('dist', '工具集'))
+        exe_name = '工具集.exe'
+        exe_path = os.path.join(dist_dir, exe_name)
+        icon_path = os.path.abspath(os.path.join('resources', 'images', 'icons', 'app.png'))
 
         if os.path.exists(exe_path):
             # 创建发布包
-            release_name = f"TCP服务器_v{datetime.datetime.now().strftime('%Y%m%d')}"
+            release_name = f"工具集_v{datetime.datetime.now().strftime('%Y%m%d')}"
             zip_path = create_zip(dist_dir, release_name)
 
             if zip_path and os.path.exists(zip_path):
@@ -108,8 +133,8 @@ def main():
                     try:
                         import winshell
                         desktop = winshell.desktop()
-                        shortcut_path = os.path.join(desktop, "TCP服务器.lnk")
-                        if create_shortcut(exe_path, shortcut_path):
+                        shortcut_path = os.path.join(desktop, f"{exe_name.replace('.exe', '.lnk')}")
+                        if create_shortcut(exe_path, shortcut_path,dist_dir,icon_path):
                             print(f"已在桌面创建快捷方式: {shortcut_path}")
                     except Exception as e:
                         print(f"创建快捷方式时出错: {str(e)}")

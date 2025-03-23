@@ -2,7 +2,7 @@ import os
 import subprocess
 
 def compile_proto():
-    proto_path = "../plugins/proto"
+    proto_path = "../tools/tcp_server/plugins/proto"
     os.makedirs(proto_path, exist_ok=True)
 
     # 使用完整路径

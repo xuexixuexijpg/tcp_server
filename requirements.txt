@@ -1,5 +1,6 @@
 # 基本依赖
-pillow
+pillow>=10.0.0
+#customtkinter>=5.2.0
 pyinstaller==6.12.0  # 使用实际存在的最新版本
 pywin32; sys_platform == 'win32'  # Windows 特定依赖
 
