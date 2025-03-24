@@ -1,10 +1,10 @@
 import tkinter as tk
-import webbrowser
+# import webbrowser
 from tkinter import ttk, filedialog, messagebox
 import os
-from moviepy import VideoFileClip
-from lottie import parsers, objects, Point
-import json
+# from moviepy import VideoFileClip
+# from lottie import parsers, objects, Point
+# import json
 import pyperclip
 
 class ConverterWindow:
@@ -125,28 +125,28 @@ class ConverterWindow:
             file_ext = os.path.splitext(input_file)[1].lower()
 
             # 创建Lottie动画
-            an = objects.Animation()
-
-            if file_ext in ['.gif', '.mp4', '.avi', '.mov']:
-                clip = VideoFileClip(input_file)
-                an.width = clip.size[0]
-                an.height = clip.size[1]
-                an.frame_rate = clip.fps
-                clip.close()
-            elif file_ext in ['.svg']:
-                # 使用lottie的SVG解析器
-                an = parsers.svg.parse_svg_file(input_file)
-            elif file_ext in ['.png', '.jpg', '.jpeg']:
-                # 处理静态图片
-                from PIL import Image
-                with Image.open(input_file) as img:
-                    an.width = img.width
-                    an.height = img.height
-                    an.frame_rate = 1
-
-            # 保存为Lottie格式
-            with open(self.output_path, "w") as f:
-                json.dump(an.to_dict(), f)
+            # an = objects.Animation()
+            #
+            # if file_ext in ['.gif', '.mp4', '.avi', '.mov']:
+            #     clip = VideoFileClip(input_file)
+            #     an.width = clip.size[0]
+            #     an.height = clip.size[1]
+            #     an.frame_rate = clip.fps
+            #     clip.close()
+            # elif file_ext in ['.svg']:
+            #     # 使用lottie的SVG解析器
+            #     an = parsers.svg.parse_svg_file(input_file)
+            # elif file_ext in ['.png', '.jpg', '.jpeg']:
+            #     # 处理静态图片
+            #     from PIL import Image
+            #     with Image.open(input_file) as img:
+            #         an.width = img.width
+            #         an.height = img.height
+            #         an.frame_rate = 1
+            #
+            # # 保存为Lottie格式
+            # with open(self.output_path, "w") as f:
+            #     json.dump(an.to_dict(), f)
 
             self.status_var.set("转换完成!")
             messagebox.showinfo("成功", f"文件已保存到:\n{self.output_path}")
@@ -165,7 +165,7 @@ class ConverterWindow:
 
     def _open_browser(self, url):
         """打开浏览器访问预览网站"""
-        webbrowser.open(url)
+        # webbrowser.open(url)
 
     def _on_enter(self, label):
         """鼠标悬停时添加下划线"""
