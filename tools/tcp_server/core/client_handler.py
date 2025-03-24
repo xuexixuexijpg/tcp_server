@@ -15,6 +15,15 @@ def handle_client_tls(tls_socket, addr, context, server):
                 data = tls_socket.recv(1024)
                 if not data:
                     break
+                # 记录原始数据
+                server.log(f"从 {client_id} 接收数据: {data}")
+                try:
+                        # 尝试解码为文本
+                    text_data = data.decode('utf-8')
+                    server.log(f"解码后的文本: {text_data}")
+                except UnicodeDecodeError:
+                    # 如果解码失败，显示十六进制格式
+                    server.log(f"二进制数据(HEX): {data.hex()}")
 
                 # 使用新的消息处理方法
                 server.process_message(tls_socket, addr, data)
@@ -30,8 +39,12 @@ def handle_client_tls(tls_socket, addr, context, server):
     except Exception as e:
         server.log(f"客户端线程发生异常 {client_id}: {e}")
     finally:
-        # 清理连接
+        try:
+            tls_socket.close()
+        except:
+            pass
         server.remove_client(client_id)
+        server.log(f"TLS客户端 {client_id} 已断开连接")
 
 
 

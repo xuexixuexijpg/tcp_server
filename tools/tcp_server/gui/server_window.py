@@ -505,7 +505,7 @@ class ServerWindow(BaseWindow):
             return False
 
         # 获取套接字并验证类型
-        client_socket = self.client_sockets[client_id]
+        client_socket, address = self.client_sockets[client_id]
         print(f"客户端套接字类型: {type(client_socket)}")
 
         # 检查是否为有效的套接字对象
