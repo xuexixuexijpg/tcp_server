@@ -242,7 +242,6 @@ class ServerWindow(BaseWindow):
         if not selected_ip:
             messagebox.showerror("错误", "请先选择IP地址")
             return
-
         # 显示证书生成对话框
         # 使用主窗口或当前窗口作为父窗口
         # parent = self.master if self.master else self.root
@@ -251,6 +250,9 @@ class ServerWindow(BaseWindow):
         cert_dialog.transient(self.root)
         cert_dialog.grab_set()
         self.root.wait_window(cert_dialog)
+        # 检查用户是否确认生成证书
+        if not hasattr(cert_dialog, 'result') or not cert_dialog.result:
+            return
 
         # 如果用户关闭了对话框
         if not hasattr(cert_dialog, 'generate_client_cert'):

@@ -16,6 +16,8 @@ class CertificateGenerationDialog(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.ip_address = ip_address
+        self.result = False  # 添加结果标志
+        self.generate_client = False  # 添加客户端证书生成标志
 
         self.title("生成TLS证书")
         self.transient(parent)
@@ -28,6 +30,9 @@ class CertificateGenerationDialog(tk.Toplevel):
         # 创建对话框内容
         self._create_dialog()
         self._center_window()
+
+        # 添加窗口关闭事件处理
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
     def _create_dialog(self):
         """创建对话框内容"""
@@ -65,7 +70,7 @@ class CertificateGenerationDialog(tk.Toplevel):
         ttk.Button(
             button_frame,
             text="取消",
-            command=self.destroy
+            command=self._on_cancel
         ).pack(side="left", padx=5)
 
     def _center_window(self):
@@ -83,4 +88,12 @@ class CertificateGenerationDialog(tk.Toplevel):
     def _confirm(self):
         """确认生成证书"""
         # 简单关闭对话框，实际的生成操作在server_window中处理
+        self.result = True
+        self.generate_client = self.generate_client_cert.get()
+        self.destroy()
+
+
+    def _on_cancel(self):
+        """取消生成证书"""
+        self.result = False
         self.destroy()

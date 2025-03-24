@@ -78,10 +78,15 @@ class BaseServer:
             # 当没有配置插件时，直接显示原始数据
             if not hasattr(self, 'plugin_manager') or not self.plugin_manager.client_plugins.get(client_id):
                 # 尝试解码为字符串，如果失败则显示十六进制
-                try:
-                    display_data = data.decode('utf-8')
-                except UnicodeDecodeError:
+                if isinstance(data, bytes):
                     display_data = f"HEX: {data.hex()}"
+                    try:
+                        text_data = data.decode('utf-8')
+                        display_data = f"{display_data}\nTEXT: {text_data}"
+                    except UnicodeDecodeError:
+                        pass
+                else:
+                    display_data = str(data)
 
                 if self.message_received_callback:
                     self.message_received_callback(client_socket, address, display_data)
@@ -314,7 +319,7 @@ class TLSServer(BaseServer):
             return False
 
 
-    def register_client_socket(self, client_id, ssl_socket):
+    def register_client_socket(self, ssl_socket,client_id):
         """注册客户端SSL套接字"""
         import ssl
         # 验证是否为有效的 SSL 套接字
