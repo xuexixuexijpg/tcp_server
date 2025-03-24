@@ -489,9 +489,12 @@ class ServerWindow(BaseWindow):
         client_id = f"{address[0]}:{address[1]}"
 
         try:
-            # 尝试解码为字符串
-            message = data.decode('utf-8')
-
+            # 如果数据已经是字符串，直接使用
+            if isinstance(data, str):
+                message = data
+            else:
+                # 否则尝试解码为字符串
+                message = data.decode('utf-8')
             # 记录消息
             now = datetime.now().strftime("%H:%M:%S")
             self.messaging_panel.receive_message(f"[{now}] {client_id}: {message}")
@@ -529,7 +532,8 @@ class ServerWindow(BaseWindow):
             if isinstance(message, bytes):
                 data_to_send = message
             else:
-                data_to_send = message.encode('utf-8')
+                # 否则，将字符串编码为bytes
+                data_to_send = str(message).encode('utf-8')
 
             client_socket.sendall(data_to_send)
             return True
@@ -562,7 +566,7 @@ class ServerWindow(BaseWindow):
 
         try:
             # 获取客户端socket并关闭连接
-            client_socket, _ = self.client_sockets[client_id]
+            client_socket = self.client_sockets[client_id]
 
             try:
                 # 先发送断开连接的消息给客户端
