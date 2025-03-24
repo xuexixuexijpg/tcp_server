@@ -33,7 +33,7 @@ class ServerWindow(BaseWindow):
         # 服务器相关变量
         self.server = None
         self.server_thread = None
-        self.client_sockets = {}  # {client_id: (socket, address)}
+        self.client_sockets = {}  # {client_id: (socket)}
 
         # 创建证书目录
         self.cert_base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "certs")
@@ -374,6 +374,13 @@ class ServerWindow(BaseWindow):
                 return
 
             server_type = self.server_type.get()
+            # 创建服务器实例时传入回调函数
+            callbacks = {
+                'log_callback': self.log,
+                'client_connected_callback': self.on_client_connected,
+                'client_disconnected_callback': self.on_client_disconnected,
+                'message_received_callback': self.on_message_received
+            }
 
             # 根据服务器类型选择TLS或TCP
             if server_type == "TLS加密":
@@ -395,12 +402,12 @@ class ServerWindow(BaseWindow):
                     ssl_context.check_hostname = False
                     ssl_context.verify_mode = ssl.CERT_NONE
 
-                    self.server = TLSServer(ip, port, ssl_context)
+                    self.server = TLSServer(ip, port, ssl_context,**callbacks)
                 except Exception as e:
                     self.log(f"加载TLS证书失败: {str(e)}", "ERROR")
                     return
             else:
-                self.server = TCPServer(ip, port)
+                self.server = TCPServer(ip, port,**callbacks)
 
             # 设置回调函数
             self.server.client_connected_callback = self.on_client_connected
@@ -462,7 +469,7 @@ class ServerWindow(BaseWindow):
     def on_client_connected(self, client_socket, address):
         """当客户端连接时被调用"""
         client_id = f"{address[0]}:{address[1]}"
-        self.client_sockets[client_id] = (client_socket, address)
+        self.client_sockets[client_id] = client_socket
 
         # 更新客户端列表
         self.client_manager.add_client(client_id, address)
@@ -497,7 +504,7 @@ class ServerWindow(BaseWindow):
         """发送消息到指定客户端"""
             # 首先打印客户端ID和客户端套接字字典，帮助调试
         print(f"正在尝试发送消息到客户端: {client_id}")
-        print(f"客户端套接字字典键: {list(self.client_sockets.keys())}")
+        self.log(f"客户端套接字字典键: {list(self.client_sockets.keys())}")
 
         # 确认客户端ID存在
         if client_id not in self.client_sockets:
@@ -505,8 +512,8 @@ class ServerWindow(BaseWindow):
             return False
 
         # 获取套接字并验证类型
-        client_socket, address = self.client_sockets[client_id]
-        print(f"客户端套接字类型: {type(client_socket)}")
+        client_socket = self.client_sockets[client_id]
+        self.log(f"客户端套接字类型: {type(client_socket)}")
 
         # 检查是否为有效的套接字对象
         import socket
