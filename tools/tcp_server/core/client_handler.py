@@ -9,27 +9,27 @@ def handle_client_tls(tls_socket, addr, context, server):
     try:
         # 直接使用传入的 TLS 套接字进行通信
         # 不需要再进行 TLS 包装，因为已经在主线程中完成了
-        while True:
+        while server.running:
             try:
                 # 接收数据
                 data = tls_socket.recv(1024)
                 if not data:
+                    server.log(f"客户端 {client_id} 断开连接")
                     break
                 # 记录原始数据
                 server.log(f"从 {client_id} 接收数据: {data}")
-                try:
-                        # 尝试解码为文本
-                    text_data = data.decode('utf-8')
-                    server.log(f"解码后的文本: {text_data}")
-                except UnicodeDecodeError:
-                    # 如果解码失败，显示十六进制格式
-                    server.log(f"二进制数据(HEX): {data.hex()}")
-
-                # 使用新的消息处理方法
+                # 处理接收到的数据
                 server.process_message(tls_socket, addr, data)
-
+            except ssl.SSLWantReadError:
+                # TLS 需要更多数据才能完成操作
+                continue
             except ssl.SSLError as e:
                 server.log(f"TLS 连接错误 {client_id}: {e}")
+                break
+            except socket.timeout:
+                continue
+            except ConnectionResetError:
+                server.log(f"客户端 {client_id} 重置连接")
                 break
             except Exception as e:
                 server.log(f"处理客户端 {client_id} 消息时出错: {e}")

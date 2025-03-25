@@ -75,6 +75,9 @@ class BaseServer:
         client_id = f"{address[0]}:{address[1]}"
 
         try:
+            # 检查数据是否为空
+            if not data:
+                return
             # 当没有配置插件时，直接显示原始数据
             if not hasattr(self, 'plugin_manager') or not self.plugin_manager.client_plugins.get(client_id):
                 # 尝试解码为字符串，如果失败则显示十六进制
@@ -98,7 +101,7 @@ class BaseServer:
             )
 
             # 通知UI显示消息
-            if self.message_received_callback:
+            if display_data and self.message_received_callback:
                 self.message_received_callback(client_socket, address, str(display_data))
 
             # 处理要发送的响应数据
@@ -107,7 +110,7 @@ class BaseServer:
             )
 
             # 发送响应数据
-            if response_data and response_data != data:
+            if response_data:
                 self.send_to_client(client_id, response_data)
         except Exception as e:
             self.log(f"处理消息时出错: {str(e)}")
@@ -225,12 +228,12 @@ class TLSServer(BaseServer):
 
 
         # 不需要在这里包装SSL，接受连接后再包装
-        # self.server_socket = plain_socket
-        self.server_socket = self.ssl_context.wrap_socket(
-            plain_socket,
-            server_side=True,
-            do_handshake_on_connect=True  # 连接时立即进行握手
-        )
+        self.server_socket = plain_socket
+        # self.server_socket = self.ssl_context.wrap_socket(
+        #     plain_socket,
+        #     server_side=True,
+        #     do_handshake_on_connect=True  # 连接时立即进行握手
+        # )
     def start(self):
         """启动TLS服务器"""
         import ssl
@@ -249,22 +252,22 @@ class TLSServer(BaseServer):
 
                     try:
                         # 直接在这里进行 TLS 握手，而不是在单独的线程中
-                        # client_socket.settimeout(5)  # 设置较短的超时时间用于握手
-                        # tls_socket = self.ssl_context.wrap_socket(
-                        #     client_socket,
-                        #     server_side=True
-                        # )
+                        client_socket.settimeout(1)  # 设置较短的超时时间用于握手
+                        tls_socket = self.ssl_context.wrap_socket(
+                            client_socket,
+                            server_side=True
+                        )
+                        self.log(f"当前连接协议版本 {tls_socket.version()}")
                         # 恢复原始超时设置
                         # tls_socket.settimeout(self.timeout)
-                        client_socket.settimeout(None) # 永不超时
-
+                        # tls_socket.settimeout(None) # 永不超时
                         # 注册客户端套接字
-                        self.register_client_socket(client_socket, client_id)
+                        self.register_client_socket(tls_socket, client_id)
 
                         # 为每个客户端创建新线程处理
                         client_thread = threading.Thread(
                             target=handle_client_tls,
-                            args=(client_socket, addr, self.ssl_context, self),
+                            args=(tls_socket, addr, self.ssl_context, self),
                             name=f"TLSClientThread-{client_id}"  # 添加线程名称
                         )
                         client_thread.daemon = True
@@ -272,7 +275,7 @@ class TLSServer(BaseServer):
                         self.active_threads.append(client_thread)
                         # 通知UI有新客户端连接
                         if self.client_connected_callback:
-                                self.client_connected_callback(client_socket, addr)
+                                self.client_connected_callback(tls_socket, addr)
                     except ssl.SSLError as e:
                         # 捕获 TLS 握手失败
                         self.log(f"TLS 握手失败，拒绝来自 {addr} 的连接: {e}")
