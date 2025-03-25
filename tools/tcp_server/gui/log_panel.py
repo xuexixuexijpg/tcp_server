@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import tkinter as tk
+from threading import Lock
 from tkinter import ttk
 from datetime import datetime
 
@@ -11,6 +12,7 @@ class LogPanel(ttk.Frame):
 
     def __init__(self, parent):
         super().__init__(parent)
+        self.lock = Lock()
         self._create_widgets()
 
     def _create_widgets(self):
@@ -37,18 +39,22 @@ class LogPanel(ttk.Frame):
 
     def log(self, message, level="INFO"):
         """添加日志消息"""
-        if level not in ["INFO", "WARNING", "ERROR"]:
-            level = "INFO"
+        try:
+            with self.lock:
+                if level not in ["INFO", "WARNING", "ERROR"]:
+                    level = "INFO"
 
-        # 获取当前时间
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_line = f"[{timestamp}] [{level}] {message}\n"
+                # 获取当前时间
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                log_line = f"[{timestamp}] [{level}] {message}\n"
 
-        # 添加到日志区域
-        self.log_area.config(state=tk.NORMAL)
-        self.log_area.insert(tk.END, log_line, level)
-        self.log_area.see(tk.END)  # 滚动到最新消息
-        self.log_area.config(state=tk.DISABLED)
+                # 添加到日志区域
+                self.log_area.config(state=tk.NORMAL)
+                self.log_area.insert(tk.END, log_line, level)
+                self.log_area.see(tk.END)  # 滚动到最新消息
+                self.log_area.config(state=tk.DISABLED)
 
-        # 打印到控制台
-        print(f"[{level}] {message}")
+                # 打印到控制台
+                print(f"[{level}] {message}")
+        except tk.TclError:
+            pass  # Widget was destroyed

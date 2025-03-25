@@ -11,7 +11,9 @@ class BaseServer:
 
     def __init__(self, host, port, backlog=5, timeout=1.0,
                  log_callback=None, client_connected_callback=None,
-                 client_disconnected_callback=None, message_received_callback=None):
+                 client_disconnected_callback=None, message_received_callback=None,
+                 plugin_manager=None
+                 ):
         self.host = str(host)  # 确保 host 是字符串
         self.port = port
         self.backlog = backlog
@@ -26,7 +28,7 @@ class BaseServer:
         self.client_connected_callback = client_connected_callback
         self.client_disconnected_callback = client_disconnected_callback
         self.message_received_callback = message_received_callback
-        self.plugin_manager = PluginManager()
+        self.plugin_manager =  plugin_manager or PluginManager()
 
     def log(self, message):
         """记录日志"""
@@ -112,10 +114,11 @@ class TCPServer(BaseServer):
 
     def __init__(self, host, port, backlog=5, timeout=1.0,
                  log_callback=None, client_connected_callback=None,
-                 client_disconnected_callback=None, message_received_callback=None):
+                 client_disconnected_callback=None, message_received_callback=None,
+                 plugin_manager=None):
         super().__init__(host, port, backlog, timeout,
                          log_callback, client_connected_callback,
-                         client_disconnected_callback, message_received_callback)
+                         client_disconnected_callback, message_received_callback,plugin_manager)
         # 保存客户端socket的映射
         self.client_sockets = {}
 
@@ -195,10 +198,12 @@ class TLSServer(BaseServer):
 
     def __init__(self, host, port, ssl_context, backlog=5, timeout=1.0,
                  log_callback=None, client_connected_callback=None,
-                 client_disconnected_callback=None, message_received_callback=None):
+                 client_disconnected_callback=None,
+                 message_received_callback=None,plugin_manager=None):
         super().__init__(host, port, backlog, timeout,
                          log_callback, client_connected_callback,
-                         client_disconnected_callback, message_received_callback)
+                         client_disconnected_callback,
+                         message_received_callback,plugin_manager)
         self.ssl_context = ssl_context
         self.client_sockets = {}
 

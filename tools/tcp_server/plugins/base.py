@@ -44,6 +44,13 @@ class PluginManager:
         self.plugins: Dict[str, Dict] = {}
         self.client_plugins: Dict[str, str] = {}
 
+    def unload_client_plugin(self, client_id):
+        """卸载客户端的插件"""
+        if client_id in self.client_plugins:
+            del self.client_plugins[client_id]
+            return True
+        return False
+
     def load_plugin(self, plugin_path: str) -> Optional[str]:
         """从指定路径加载插件"""
         try:
@@ -104,6 +111,9 @@ class PluginManager:
         try:
             if not plugin_name in self.plugins:
                 raise KeyError(f"插件 {plugin_name} 未加载")
+
+            # 先卸载旧插件
+            self.unload_client_plugin(client_id)
 
             plugin = self.plugins[plugin_name]['instance']
             if not plugin.validate():

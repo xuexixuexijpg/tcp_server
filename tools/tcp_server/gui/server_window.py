@@ -21,7 +21,8 @@ from .client_manager_panel import ClientManagerPanel
 from .message_panel import MessagingPanel
 from .log_panel import LogPanel
 from ..core.server import TLSServer,TCPServer
-
+from ..plugins.base import PluginManager
+from .tls_client_panel import TlsClientPanel
 
 class ServerWindow(BaseWindow):
     def __init__(self,master = None,window_number=None):
@@ -34,7 +35,8 @@ class ServerWindow(BaseWindow):
         self.server = None
         self.server_thread = None
         self.client_sockets = {}  # {client_id: (socket)}
-
+        # 添加插件管理器初始化
+        self.plugin_manager = PluginManager()
         # 创建证书目录
         self.cert_base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "certs")
         os.makedirs(self.cert_base_dir, exist_ok=True)
@@ -59,10 +61,12 @@ class ServerWindow(BaseWindow):
         server_tab = ttk.Frame(notebook)
         clients_tab = ttk.Frame(notebook)
         messages_tab = ttk.Frame(notebook)
+        tls_test_tab = ttk.Frame(notebook)
 
         notebook.add(server_tab, text="服务器")
         notebook.add(clients_tab, text="客户端")
         notebook.add(messages_tab, text="消息")
+        notebook.add(tls_test_tab, text="TLS测试")
 
         # 服务器选项卡 - 配置面板
         self._create_server_config(server_tab)
@@ -74,6 +78,9 @@ class ServerWindow(BaseWindow):
         # 消息选项卡 - 消息面板
         self.messaging_panel = MessagingPanel(messages_tab, self)
         self.messaging_panel.pack(fill=tk.BOTH, expand=True)
+        #测试
+        self.tls_test_panel = TlsClientPanel(tls_test_tab)
+        self.tls_test_panel.pack(fill=tk.BOTH, expand=True)
 
         # 日志面板 (所有选项卡下方)
         self.log_panel = LogPanel(main_frame)
@@ -379,7 +386,8 @@ class ServerWindow(BaseWindow):
                 'log_callback': self.log,
                 'client_connected_callback': self.on_client_connected,
                 'client_disconnected_callback': self.on_client_disconnected,
-                'message_received_callback': self.on_message_received
+                'message_received_callback': self.on_message_received,
+                'plugin_manager': self.plugin_manager  # 添加插件管理器
             }
 
             # 根据服务器类型选择TLS或TCP
@@ -479,7 +487,7 @@ class ServerWindow(BaseWindow):
 
     def on_client_disconnected(self, client_socket):
         """当客户端断开连接时被调用"""
-        for client_id, (sock, _) in list(self.client_sockets.items()):
+        for client_id, sock in list(self.client_sockets.items()):
             if sock == client_socket:
                 self.remove_client(client_id)
                 break

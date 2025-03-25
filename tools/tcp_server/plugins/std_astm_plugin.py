@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from datetime import datetime
-from .base import PluginBase
+from tools.tcp_server.plugins.base import PluginBase
 
 class Plugin(PluginBase):
     """ASTM协议处理插件"""

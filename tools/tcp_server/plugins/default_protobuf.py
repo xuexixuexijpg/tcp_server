@@ -1,7 +1,7 @@
 # plugins/default_protobuf.py
-from .base import PluginBase
+from tools.tcp_server.plugins.base import PluginBase
 import time
-from .proto import message_pb2
+from tools.tcp_server.plugins.proto import message_pb2
 
 class Plugin(PluginBase):
     """默认的Protobuf插件"""
