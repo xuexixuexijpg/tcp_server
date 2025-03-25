@@ -5,6 +5,11 @@ from .proto import message_pb2
 
 class Plugin(PluginBase):
     """默认的Protobuf插件"""
+    # 将 name 改为属性装饰器
+    @property
+    def name(self) -> str:
+        """插件名称"""
+        return "示例插件"
 
     def process_incoming(self, data: bytes) -> str:
         """处理接收到的数据，返回用于显示的字符串"""

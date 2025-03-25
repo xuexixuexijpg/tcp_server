@@ -11,6 +11,7 @@ class ClientManagerPanel(ttk.Frame):
     def __init__(self, parent, server_window):
         super().__init__(parent)
         self.server_window = server_window
+        self.client_plugins = {}  # 存储客户端ID和对应的插件名
         self._create_widgets()
 
     def _create_widgets(self):
@@ -46,12 +47,15 @@ class ClientManagerPanel(ttk.Frame):
     def add_client(self, client_id, address):
         """添加客户端到列表"""
         self.clients_listbox.insert(tk.END, client_id)
+        self.client_plugins[client_id] = ""  # 初始化插件为空
 
     def remove_client(self, client_id):
         """从列表移除客户端"""
         for i in range(self.clients_listbox.size()):
-            if self.clients_listbox.get(i) == client_id:
+            if client_id in self.clients_listbox.get(i):
                 self.clients_listbox.delete(i)
+                if client_id in self.client_plugins:
+                    del self.client_plugins[client_id]
                 break
 
     def get_selected_client(self):
@@ -78,23 +82,45 @@ class ClientManagerPanel(ttk.Frame):
 
     def _select_plugin(self):
         """为选中的客户端选择插件"""
-        client_id = self.get_selected_client()
-        if not client_id:
-            return
+        try:
+            client_id = self.get_selected_client()
+            if not client_id:
+                return
+            client_id = client_id.split(" [")[0]
 
-        # 打开文件选择对话框
-        plugin_path = filedialog.askopenfilename(
-            title="选择插件文件",
-            filetypes=[("Python文件", "*.py")],
-            initialdir=os.path.join(os.path.dirname(__file__), "../plugins")
-        )
-
-        if plugin_path:
+            plugin_path = filedialog.askopenfilename(
+                title="选择插件文件",
+                filetypes=[("Python文件", "*.py")],
+                initialdir=os.path.join(os.path.dirname(__file__), "../plugins")
+            )
+            if not plugin_path:
+                return
             # 加载插件
             plugin_name = self.server_window.plugin_manager.load_plugin(plugin_path)
-            if plugin_name:
-                # 设置客户端插件
-                if self.server_window.plugin_manager.set_client_plugin(client_id, plugin_name):
-                    messagebox.showinfo("成功", f"已为客户端 {client_id} 设置插件 {plugin_name}")
-                else:
-                    messagebox.showerror("错误", "设置插件失败")
+            if not plugin_name:
+                messagebox.showerror("错误", "加载插件失败")
+                return
+            # 设置客户端插件
+            if not self.server_window.plugin_manager.set_client_plugin(client_id, plugin_name):
+                messagebox.showerror("错误", "设置插件失败")
+                return
+            # 更新显示
+            plugin_info = self.server_window.plugin_manager.plugins[plugin_name]
+            self.client_plugins[client_id] = plugin_info['name']
+            self._update_client_display(client_id)
+            messagebox.showinfo("成功", f"已为客户端 {client_id} 设置插件 {plugin_info['name']}")
+        except Exception as e:
+            messagebox.showerror("错误", f"设置插件时发生错误: {str(e)}")
+
+    def _update_client_display(self, client_id):
+        # 查找客户端在列表中的位置
+        for i in range(self.clients_listbox.size()):
+            item = self.clients_listbox.get(i)
+            if client_id in item:  # 使用in来检查，因为item可能包含插件名
+                self.clients_listbox.delete(i)
+                # 重新插入带插件名的显示
+                display_text = client_id
+                if client_id in self.client_plugins:
+                    display_text = f"{client_id} [插件: {self.client_plugins[client_id]}]"
+                self.clients_listbox.insert(i, display_text)
+                break

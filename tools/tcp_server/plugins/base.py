@@ -3,10 +3,17 @@ import os
 import sys
 import importlib.util
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Optional, Dict, Any
 
 class PluginBase(ABC):
     """插件基类"""
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """插件名称"""
+        pass
+
 
     @abstractmethod
     def process_incoming(self, data: bytes) -> Any:
@@ -18,6 +25,19 @@ class PluginBase(ABC):
         """处理要发送的数据"""
         pass
 
+    def validate(self) -> bool:
+        """验证插件是否可用"""
+        try:
+            # 基础功能测试
+            test_data = b"test"
+            processed = self.process_incoming(test_data)
+            if processed is None:
+                return False
+            result = self.process_outgoing(processed)
+            return isinstance(result, bytes)
+        except Exception:
+            return False
+
 class PluginManager:
     """插件管理器"""
     def __init__(self):
@@ -27,57 +47,94 @@ class PluginManager:
     def load_plugin(self, plugin_path: str) -> Optional[str]:
         """从指定路径加载插件"""
         try:
-            # 获取插件目录和文件名
+            # 检查文件是否存在
+            if not os.path.exists(plugin_path):
+                raise FileNotFoundError(f"插件文件不存在: {plugin_path}")
+
             plugin_dir = os.path.dirname(plugin_path)
             plugin_file = os.path.basename(plugin_path)
             plugin_name = os.path.splitext(plugin_file)[0]
 
-            # 添加插件目录到Python路径
+            # 检查插件是否已加载
+            if plugin_name in self.plugins:
+                return plugin_name
+
             if plugin_dir not in sys.path:
                 sys.path.append(plugin_dir)
 
-            # 加载插件模块
             spec = importlib.util.spec_from_file_location(plugin_name, plugin_path)
             if not spec or not spec.loader:
-                return None
+                raise ImportError("无法加载插件模块")
 
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
-            # 实例化插件
-            plugin = module.Plugin()
+            # 检查create_plugin函数是否存在
+            if not hasattr(module, 'create_plugin'):
+                raise AttributeError("插件缺少create_plugin函数")
+
+            # 创建插件实例
+            plugin = module.create_plugin()
+
+            # 验证插件类型
+            if not isinstance(plugin, PluginBase):
+                raise TypeError("插件必须继承PluginBase")
+
+            # 验证插件功能
+            if not plugin.validate():
+                raise RuntimeError("插件功能验证失败")
 
             # 存储插件信息
             self.plugins[plugin_name] = {
                 'instance': plugin,
-                'path': plugin_path
+                'path': plugin_path,
+                'name': plugin.name,
+                'loaded_time': datetime.now()
             }
 
             return plugin_name
 
         except Exception as e:
-            print(f"加载插件失败 {plugin_path}: {e}")
+            print(f"加载插件失败 {plugin_path}: {str(e)}")
             return None
+
 
     def set_client_plugin(self, client_id: str, plugin_name: str) -> bool:
         """为客户端设置插件"""
-        if plugin_name in self.plugins:
+        try:
+            if not plugin_name in self.plugins:
+                raise KeyError(f"插件 {plugin_name} 未加载")
+
+            plugin = self.plugins[plugin_name]['instance']
+            if not plugin.validate():
+                raise RuntimeError(f"插件 {plugin_name} 验证失败")
+
             self.client_plugins[client_id] = plugin_name
             return True
-        return False
+
+        except Exception as e:
+            print(f"设置客户端插件失败: {str(e)}")
+            return False
 
     def process_data(self, client_id: str, data: bytes, direction: str = 'incoming') -> Any:
         """处理数据"""
-        plugin_name = self.client_plugins.get(client_id)
-        if not plugin_name or plugin_name not in self.plugins:
-            return data
-
-        plugin = self.plugins[plugin_name]['instance']
         try:
+            plugin_name = self.client_plugins.get(client_id)
+            if not plugin_name:
+                return data
+
+            plugin = self.plugins.get(plugin_name, {}).get('instance')
+            if not plugin:
+                raise KeyError(f"找不到插件 {plugin_name}")
+
+            if not plugin.validate():
+                raise RuntimeError(f"插件 {plugin_name} 验证失败")
+
             if direction == 'incoming':
                 return plugin.process_incoming(data)
             else:
                 return plugin.process_outgoing(data)
+
         except Exception as e:
-            print(f"插件处理数据失败 {plugin_name}: {e}")
+            print(f"插件处理数据失败: {str(e)}")
             return data
