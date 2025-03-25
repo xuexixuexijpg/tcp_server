@@ -170,7 +170,12 @@ class TCPServer(BaseServer):
         try:
             client_socket = self.client_sockets.get(client_addr)
             if client_socket:
-                client_socket.send(message.encode('utf-8'))
+                # 直接转换为字节，不指定编码
+                if isinstance(message, str):
+                    message = message.encode()
+                elif not isinstance(message, bytes):
+                    message = str(message).encode()
+                client_socket.sendall(message)
                 return True
             return False
         except:
@@ -305,9 +310,11 @@ class TLSServer(BaseServer):
             return False
 
         try:
-            # 准备发送数据
+            # 直接转换为字节，不指定编码
             if isinstance(message, str):
-                message = message.encode('utf-8')
+                message = message.encode()
+            elif not isinstance(message, bytes):
+                message = str(message).encode()
 
             # 发送数据
             client_socket.sendall(message)

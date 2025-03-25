@@ -23,7 +23,7 @@ class Plugin(PluginBase):
 
             # 如果是文本类型，解码数据
             if message.type == message_pb2.Message.Type.TEXT:
-                content = message.data.decode('utf-8')
+                content = message.data.decode()
             else:
                 content = f"<二进制数据: {len(message.data)} 字节>"
 
@@ -35,7 +35,7 @@ class Plugin(PluginBase):
         except Exception as e:
             # 如果不是protobuf消息，返回原始数据
             try:
-                return data.decode('utf-8')
+                return data.decode()
             except:
                 return f"HEX: {data.hex()}"
 
@@ -48,9 +48,9 @@ class Plugin(PluginBase):
 
             # 尝试解析为文本
             try:
-                text = data.decode('utf-8')
+                text = data.decode()
                 message.type = message_pb2.Message.Type.TEXT
-                message.data = text.encode('utf-8')
+                message.data = text.encode()
             except:
                 message.type = message_pb2.Message.Type.BINARY
                 message.data = data

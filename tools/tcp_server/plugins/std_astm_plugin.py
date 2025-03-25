@@ -64,10 +64,10 @@ class Plugin(PluginBase):
         """
         try:
             if isinstance(data, str):
-                return data.encode('utf-8')
+                return data.encode()
             return data
         except Exception as e:
-            return str(e).encode('utf-8')
+            return str(e).encode()
 
     def _extract_sample_id(self, message):
         """从ASTM消息提取样本ID"""

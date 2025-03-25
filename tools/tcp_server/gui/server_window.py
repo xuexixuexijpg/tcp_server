@@ -494,7 +494,7 @@ class ServerWindow(BaseWindow):
                 message = data
             else:
                 # 否则尝试解码为字符串
-                message = data.decode('utf-8')
+                message = data.decode()
             # 记录消息
             now = datetime.now().strftime("%H:%M:%S")
             self.messaging_panel.receive_message(f"[{now}] {client_id}: {message}")
@@ -574,7 +574,7 @@ class ServerWindow(BaseWindow):
                     "type": "disconnect",
                     "message": "Server closing connection"
                 })
-                client_socket.sendall(disconnect_message.encode('utf-8'))
+                client_socket.sendall(disconnect_message.encode())
                 # 等待一小段时间让客户端处理消息
                 time.sleep(0.1)
                 # 关闭连接
