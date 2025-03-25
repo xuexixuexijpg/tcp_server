@@ -80,21 +80,13 @@ class BaseServer:
                 return
             # 当没有配置插件时，直接显示原始数据
             if not hasattr(self, 'plugin_manager') or not self.plugin_manager.client_plugins.get(client_id):
-                # 尝试解码为字符串，如果失败则显示十六进制
-                if isinstance(data, bytes):
-                    display_data = f"HEX: {data.hex()}"
-                    try:
-                        text_data = data.decode('utf-8')
-                        display_data = f"{display_data}\nTEXT: {text_data}"
-                    except UnicodeDecodeError:
-                        pass
-                else:
-                    display_data = str(data)
-
+                # 尝试解码为字符串
+                display_data = str(data)
                 if self.message_received_callback:
                     self.message_received_callback(client_socket, address, display_data)
                 return
 
+            self.log("使用插件处理消息")
             # 使用插件处理数据
             display_data = self.plugin_manager.process_data(
                 client_id, data, 'incoming'

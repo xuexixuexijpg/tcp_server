@@ -1,6 +1,7 @@
 # client_handler.py
 import socket
 import ssl
+import time
 
 
 def handle_client_tls(tls_socket, addr, context, server):
@@ -16,10 +17,12 @@ def handle_client_tls(tls_socket, addr, context, server):
                 if not data:
                     server.log(f"客户端 {client_id} 断开连接")
                     break
-                # 记录原始数据
-                server.log(f"从 {client_id} 接收数据: {data}")
-                # 处理接收到的数据
-                server.process_message(tls_socket, addr, data)
+                # 添加数据处理判断
+                if len(data.strip()) > 0:
+                    server.log(f"从 {client_id} 接收数据: {data}")
+                    server.process_message(tls_socket, addr, data)
+                # 添加短暂延时
+                time.sleep(0.1)
             except ssl.SSLWantReadError:
                 # TLS 需要更多数据才能完成操作
                 continue
