@@ -237,6 +237,7 @@ class TLSServer(BaseServer):
         """设置TLS服务器socket"""
         # 先创建普通的socket
         plain_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        #允许端口快速重用
         plain_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         plain_socket.bind((self.host, self.port))
         plain_socket.listen(self.backlog)
@@ -252,7 +253,7 @@ class TLSServer(BaseServer):
         # self.ssl_context.verify_mode = ssl.CERT_REQUIRED
         # self.ssl_context.load_verify_locations(cafile="ca.crt")
         # 设置验证模式
-        self.ssl_context.verify_mode = ssl.CERT_OPTIONAL  # 或使用 CERT_REQUIRED 强制要求客户端证书
+        # self.ssl_context.verify_mode = ssl.CERT_OPTIONAL  # 或使用 CERT_REQUIRED 强制要求客户端证书
 
 
         # 不需要在这里包装SSL，接受连接后再包装

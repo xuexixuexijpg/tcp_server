@@ -405,10 +405,11 @@ class ServerWindow(BaseWindow):
 
                 # 创建SSL上下文
                 try:
-                    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                    # ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                     ssl_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
-                    ssl_context.check_hostname = False
-                    ssl_context.verify_mode = ssl.CERT_NONE
+                    # ssl_context.check_hostname = False
+                    # ssl_context.verify_mode = ssl.CERT_NONE
 
                     self.server = TLSServer(ip, port, ssl_context,**callbacks)
                 except Exception as e:
