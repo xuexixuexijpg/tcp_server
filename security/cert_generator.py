@@ -1,264 +1,126 @@
-import os
-import socket
 import ipaddress
-import threading
-from datetime import datetime, timedelta
+import os
 
-from cryptography import x509
-from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from OpenSSL import crypto
 
-# 用于在线程之间通信的回调函数类型
-"""
-回调函数格式:
-- on_success(cert_path, key_path): 证书生成成功时调用
-- on_error(error_message): 发生错误时调用
-- on_progress(message): 生成过程中的进度更新
-"""
-
-
-def is_ip_address(value):
-    """
-    检查给定的值是否为有效的IP地址
-
-    参数:
-    - value: 要检查的字符串
-
-    返回:
-    - bool: 如果是有效的IPv4或IPv6地址则返回True，否则返回False
-    """
+def generate_tls_cert_openssl(hostname, cert_path, key_path,
+                      generate_client_cert=False,
+                      client_cert_path=None, client_key_path=None,
+                      ca_cert_path=None, ca_key_path=None):
+    """使用 OpenSSL crypto 生成 TLS 证书"""
     try:
-        ipaddress.ip_address(value)
-        return True
-    except ValueError:
-        return False
+        # 创建证书目录
+        os.makedirs(os.path.dirname(cert_path), exist_ok=True)
 
+        # 生成 CA 密钥
+        ca_key = crypto.PKey()
+        ca_key.generate_key(crypto.TYPE_RSA, 4096)
 
-def generate_cert_for_ip(ip_or_hostname, output_dir, on_success=None, on_error=None, on_progress=None):
-    """
-    为IP地址或主机名生成自签名证书（后台线程版本）
-
-    参数:
-    - ip_or_hostname: IP地址或主机名
-    - output_dir: 输出目录
-    - on_success: 成功回调函数 - on_success(cert_file, key_file)
-    - on_error: 错误回调函数 - on_error(error_message)
-    - on_progress: 进度更新回调函数 - on_progress(message)
-    """
-    # 创建一个后台线程执行生成操作
-    thread = threading.Thread(
-        target=_generate_cert_thread,
-        args=(ip_or_hostname, output_dir, on_success, on_error, on_progress)
-    )
-    thread.daemon = True
-    thread.start()
-    return thread
-
-
-def _generate_cert_thread(ip_or_hostname, output_dir, on_success, on_error, on_progress):
-    """在线程中执行证书生成操作"""
-    try:
-        if on_progress:
-            on_progress(f"开始为 {ip_or_hostname} 生成证书...")
-
-        # 确保输出目录存在
-        os.makedirs(output_dir, exist_ok=True)
-
-        # 确定证书和密钥文件名 - 保持原有的命名方式
-        cert_file = os.path.join(output_dir, f"{ip_or_hostname}.crt")
-        key_file = os.path.join(output_dir, f"{ip_or_hostname}.key")
-
-        if on_progress:
-            on_progress("生成私钥...")
-
-        # 生成私钥
-        private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=2048
-        )
-
-        if on_progress:
-            on_progress("准备证书主题信息...")
-
-        # 准备SAN扩展内容
-        alt_names = []
-
-        # 添加IP地址或DNS名称
-        if is_ip_address(ip_or_hostname):
-            alt_names.append(x509.IPAddress(ipaddress.ip_address(ip_or_hostname)))
-            # 如果是IP，也尝试添加对应的主机名
-            if ip_or_hostname != "127.0.0.1":
-                try:
-                    if on_progress:
-                        on_progress("解析主机名...")
-                    hostname = socket.gethostbyaddr(ip_or_hostname)[0]
-                    alt_names.append(x509.DNSName(hostname))
-                except:
-                    if on_progress:
-                        on_progress("无法解析主机名，仅使用IP地址")
-                    pass
-        else:
-            alt_names.append(x509.DNSName(ip_or_hostname))
-
-        # 总是添加localhost和127.0.0.1
-        if ip_or_hostname != "localhost":
-            alt_names.append(x509.DNSName("localhost"))
-        if ip_or_hostname != "127.0.0.1":
-            alt_names.append(x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")))
-
-        if on_progress:
-            on_progress("构建证书...")
-
-        # 构建证书
-        subject = issuer = x509.Name([
-            x509.NameAttribute(NameOID.COUNTRY_NAME, u"CN"),
-            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"State"),
-            x509.NameAttribute(NameOID.LOCALITY_NAME, u"City"),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"自签名TLS证书"),
-            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, u"IT Department"),
-            x509.NameAttribute(NameOID.COMMON_NAME, ip_or_hostname),
+        # 生成 CA 证书
+        ca_cert = crypto.X509()
+        ca_cert.get_subject().C = "CN"
+        ca_cert.get_subject().ST = "State"
+        ca_cert.get_subject().L = "City"
+        ca_cert.get_subject().O = "TCP Server CA"
+        ca_cert.get_subject().CN = hostname
+        ca_cert.set_serial_number(0)
+        ca_cert.gmtime_adj_notBefore(0)
+        ca_cert.gmtime_adj_notAfter(365*24*60*60*10)  # 10年有效期
+        ca_cert.set_issuer(ca_cert.get_subject())
+        ca_cert.set_pubkey(ca_key)
+        ca_cert.add_extensions([
+            crypto.X509Extension(b"basicConstraints", True, b"CA:TRUE"),
+            crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject=ca_cert)
         ])
+        ca_cert.sign(ca_key, 'sha256')
 
-        cert_builder = x509.CertificateBuilder().subject_name(
-            subject
-        ).issuer_name(
-            issuer
-        ).public_key(
-            private_key.public_key()
-        ).serial_number(
-            x509.random_serial_number()
-        ).not_valid_before(
-            datetime.utcnow()
-        ).not_valid_after(
-            # 有效期一年
-            datetime.utcnow() + timedelta(days=365)
-        )
+        # 生成服务器密钥
+        server_key = crypto.PKey()
+        server_key.generate_key(crypto.TYPE_RSA, 2048)
 
-        # 添加SAN扩展
-        if alt_names:
-            if on_progress:
-                on_progress("添加主体备用名称扩展...")
-            cert_builder = cert_builder.add_extension(
-                x509.SubjectAlternativeName(alt_names),
-                critical=False
-            )
+        # 生成服务器证书
+        server_cert = crypto.X509()
+        server_cert.get_subject().C = "CN"
+        server_cert.get_subject().ST = "State"
+        server_cert.get_subject().L = "City"
+        server_cert.get_subject().O = "TCP Server"
+        server_cert.get_subject().CN = hostname
+        server_cert.set_serial_number(1)
+        server_cert.gmtime_adj_notBefore(0)
+        server_cert.gmtime_adj_notAfter(365*24*60*60*10)  # 10年有效期
+        server_cert.set_issuer(ca_cert.get_subject())
+        server_cert.set_pubkey(server_key)
 
-        # 添加密钥用途扩展
-        if on_progress:
-            on_progress("添加密钥用途扩展...")
-        cert_builder = cert_builder.add_extension(
-            x509.KeyUsage(
-                digital_signature=True,
-                content_commitment=False,
-                key_encipherment=True,
-                data_encipherment=True,
-                key_agreement=False,
-                key_cert_sign=False,
-                crl_sign=False,
-                encipher_only=False,
-                decipher_only=False
-            ),
-            critical=True
-        )
+        # 添加 SAN 扩展
+        alt_names = [b"DNS:" + hostname.encode()]
+        try:
+            ip = ipaddress.ip_address(hostname)
+            alt_names.append(b"IP:" + str(ip).encode())
+        except ValueError:
+            pass
 
-        # 添加扩展密钥用途
-        cert_builder = cert_builder.add_extension(
-            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
-            critical=False
-        )
+        server_cert.add_extensions([
+            crypto.X509Extension(b"basicConstraints", True, b"CA:FALSE"),
+            crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject=server_cert),
+            crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer=ca_cert),
+            crypto.X509Extension(b"subjectAltName", False, b", ".join(alt_names))
+        ])
+        server_cert.sign(ca_key, 'sha256')
 
-        # 签署证书
-        if on_progress:
-            on_progress("签署证书...")
-        certificate = cert_builder.sign(private_key, hashes.SHA256())
+        # 保存证书和私钥
+        with open(cert_path, "wb") as f:
+            f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, server_cert))
+        with open(key_path, "wb") as f:
+            f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, server_key))
+        with open(ca_cert_path, "wb") as f:
+            f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, ca_cert))
+        with open(ca_key_path, "wb") as f:
+            f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, ca_key))
 
-        # 保存证书到文件
-        if on_progress:
-            on_progress("保存证书到文件...")
-        with open(cert_file, "wb") as f:
-            f.write(certificate.public_bytes(serialization.Encoding.PEM))
+        result = {
+            "cert_path": cert_path,
+            "key_path": key_path,
+            "ca_cert_path": ca_cert_path,
+            "ca_key_path": ca_key_path
+        }
 
-        # 保存私钥到文件
-        if on_progress:
-            on_progress("保存私钥到文件...")
-        with open(key_file, "wb") as f:
-            f.write(private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.TraditionalOpenSSL,
-                encryption_algorithm=serialization.NoEncryption()
-            ))
+        # 如果需要生成客户端证书
+        if generate_client_cert:
+            # 生成客户端密钥
+            client_key = crypto.PKey()
+            client_key.generate_key(crypto.TYPE_RSA, 2048)
 
-        if on_progress:
-            on_progress(f"证书生成完成: {cert_file}")
+            # 生成客户端证书
+            client_cert = crypto.X509()
+            client_cert.get_subject().C = "CN"
+            client_cert.get_subject().ST = "State"
+            client_cert.get_subject().L = "City"
+            client_cert.get_subject().O = "TCP Client"
+            client_cert.get_subject().CN = "client"
+            client_cert.set_serial_number(2)
+            client_cert.gmtime_adj_notBefore(0)
+            client_cert.gmtime_adj_notAfter(365*24*60*60*10)  # 10年有效期
+            client_cert.set_issuer(ca_cert.get_subject())
+            client_cert.set_pubkey(client_key)
+            client_cert.add_extensions([
+                crypto.X509Extension(b"basicConstraints", True, b"CA:FALSE"),
+                crypto.X509Extension(b"subjectKeyIdentifier", False, b"hash", subject=client_cert),
+                crypto.X509Extension(b"authorityKeyIdentifier", False, b"keyid:always", issuer=ca_cert)
+            ])
+            client_cert.sign(ca_key, 'sha256')
 
-        # 调用成功回调
-        if on_success:
-            on_success(cert_file, key_file)
+            # 保存客户端证书和私钥
+            with open(client_cert_path, "wb") as f:
+                f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, client_cert))
+            with open(client_key_path, "wb") as f:
+                f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, client_key))
+
+            result.update({
+                "client_cert_path": client_cert_path,
+                "client_key_path": client_key_path
+            })
+
+        return result
 
     except Exception as e:
-        # 调用错误回调
-        if on_error:
-            on_error(str(e))
-        else:
-            print(f"证书生成失败: {e}")
-
-
-def generate_cert_sync(ip_or_hostname, output_dir):
-    """
-    同步版本的证书生成函数（用于需要立即获取结果的场景）
-
-    参数:
-    - ip_or_hostname: IP地址或主机名
-    - output_dir: 输出目录
-
-    返回:
-    - (cert_file, key_file): 证书文件和密钥文件的路径，失败则返回(None, None)
-    """
-    result = {"cert": None, "key": None, "error": None}
-
-    def on_success(cert_file, key_file):
-        result["cert"] = cert_file
-        result["key"] = key_file
-
-    def on_error(error_message):
-        result["error"] = error_message
-
-    # 创建线程并等待完成
-    thread = _generate_cert_thread(ip_or_hostname, output_dir, on_success, on_error, None)
-    thread.join()  # 等待线程完成
-
-    if result["error"]:
-        raise Exception(result["error"])
-
-    return result["cert"], result["key"]
-
-
-# 测试函数
-if __name__ == "__main__":
-    # 示例用法
-    def success_callback(cert, key):
-        print(f"证书生成成功！\n证书: {cert}\n密钥: {key}")
-
-
-    def error_callback(error):
-        print(f"生成失败: {error}")
-
-
-    def progress_callback(message):
-        print(f"进度: {message}")
-
-
-    # 测试异步生成
-    generate_cert_for_ip(
-        "127.0.0.1",
-        "./certificates",
-        on_success=success_callback,
-        on_error=error_callback,
-        on_progress=progress_callback
-    )
-
-    # 等待测试完成
-    import time
-
-    time.sleep(10)
+        raise Exception(f"生成证书时出错: {str(e)}")

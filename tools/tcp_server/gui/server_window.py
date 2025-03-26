@@ -13,6 +13,7 @@ from datetime import datetime
 import ipaddress
 
 from core.base_window import BaseWindow
+from security.cert_generator import generate_tls_cert_openssl
 from security.generate_tls_cert import generate_tls_cert
 
 from .certificate_dialog import CertificateGenerationDialog
@@ -315,7 +316,18 @@ class ServerWindow(BaseWindow):
                 update_progress("正在生成证书...")
 
                 # 生成证书
-                result = generate_tls_cert(
+                # result = generate_tls_cert(
+                #     hostname=selected_ip,
+                #     cert_path=cert_path,
+                #     key_path=key_path,
+                #     generate_client_cert=generate_client_cert,
+                #     client_cert_path=client_cert_path,
+                #     client_key_path=client_key_path,
+                #     ca_cert_path=ca_cert_path,
+                #     ca_key_path=ca_key_path
+                # )
+
+                result = generate_tls_cert_openssl(
                     hostname=selected_ip,
                     cert_path=cert_path,
                     key_path=key_path,
