@@ -128,7 +128,7 @@ class TlsClientPanel(ttk.Frame):
                     self.client_socket.close()
                 except:
                     pass
-                self.client_socket = None
+            self.client_socket = None
 
             # Create SSL context that trusts all certificates
             context = ssl.create_default_context()
@@ -149,7 +149,7 @@ class TlsClientPanel(ttk.Frame):
             self.after(0, self._connect_success)
         except Exception as e:
             # Update GUI in main thread
-            self.after(0, lambda: self._handle_connection_error(str(e)))
+            self.after(0, lambda error=str(e): self._handle_connection_error(error))
 
     def _connect_success(self):
         self.running = True
@@ -258,46 +258,59 @@ class TlsClientPanel(ttk.Frame):
             self.log("未连接到服务器")
             return
 
-        message = self.input_text.get("1.0", tk.END).strip()
-        if not message:
+        sample_id = self.input_text.get("1.0", tk.END).strip()
+        if not sample_id:
+            self.log("请输入样本号")
             return
-
+        threading.Thread(target=self._send_astm_async,
+                         args=(sample_id,),
+                         daemon=True).start()
+    def _send_astm_async(self, sample_id):
+        """异步发送ASTM消息"""
         try:
             # ASTM 控制字符
-            ENQ = b'\x05'  # 询问
-            STX = b'\x02'  # 开始传输
-            ETX = b'\x03'  # 结束传输
-            EOT = b'\x04'  # 传输结束
+            ENQ = b'\x05'
+            STX = b'\x02'
+            ETX = b'\x03'
+            EOT = b'\x04'
+            ACK = b'\x06'
 
-            # 发送顺序：ENQ -> 等待ACK -> 发送数据帧 -> 等待ACK -> 发送EOT
+            # 构建HQL消息序列
+            now = datetime.now().strftime("%Y%m%d%H%M%S")
+            message = [
+                f"H|\\^&|||Client^1|||||||||{now}",
+                f"Q|1|{sample_id}||^^^ALL||||||||N",
+                "L|1|N"
+            ]
+            frame_data = '\r'.join(message)
+
             # 1. 发送 ENQ
             self.client_socket.send(ENQ)
-            self.log("已发送 ENQ")
+            self.after(0, lambda: self.log("已发送 ENQ"))
 
             # 2. 等待 ACK
             response = self.client_socket.recv(1024)
-            if response != b'\x06':  # ACK
-                self.log("未收到 ACK，发送取消")
+            if response != ACK:
+                self.after(0, lambda: self.log("未收到 ACK，发送取消"))
                 return
 
             # 3. 发送数据帧
-            frame = STX + message.encode('ascii', errors='ignore') + ETX
+            frame = STX + frame_data.encode('ascii', errors='ignore') + ETX
             self.client_socket.send(frame)
-            self.log(f"已发送数据帧: {message}")
+            self.after(0, lambda: self.log(f"已发送查询帧: \n{frame_data}"))
 
             # 4. 等待 ACK
             response = self.client_socket.recv(1024)
-            if response != b'\x06':  # ACK
-                self.log("未收到数据帧 ACK，发送取消")
+            if response != ACK:
+                self.after(0, lambda: self.log("未收到数据帧 ACK，发送取消"))
                 return
 
             # 5. 发送 EOT
             self.client_socket.send(EOT)
-            self.log("已发送 EOT")
+            self.after(0, lambda: self.log("已发送 EOT"))
 
             # 清空输入框
-            self.input_text.delete("1.0", tk.END)
-
+            self.after(0, lambda: self.input_text.delete("1.0", tk.END))
         except Exception as e:
-            self.log(f"发送ASTM消息失败: {str(e)}")
-            self.disconnect()
+            self.after(0, lambda: self.log(f"发送ASTM消息失败: {str(e)}"))
+            self.after(0, self.disconnect)

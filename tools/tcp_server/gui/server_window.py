@@ -402,7 +402,8 @@ class ServerWindow(BaseWindow):
                 'client_connected_callback': self.on_client_connected,
                 'client_disconnected_callback': self.on_client_disconnected,
                 'message_received_callback': self.on_message_received,
-                'plugin_manager': self.plugin_manager  # 添加插件管理器
+                'plugin_manager': self.plugin_manager,  # 添加插件管理器
+                'master' : self.root
             }
 
             # 根据服务器类型选择TLS或TCP

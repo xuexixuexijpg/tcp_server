@@ -85,14 +85,32 @@ class MessagingPanel(ttk.Frame):
 
         target = self.client_var.get()
         sent = False
+        try:
+            if target == "所有客户端":
+                # 使用广播方法发送给所有客户端
+                sent = self.server_window.server.broadcast(message)
+            else:
+                # 使用消息队列发送给特定客户端
+                sent = self.server_window.server.send_to_client(target, message)
 
-        if target == "所有客户端":
-            # 发送给所有客户端
-            sent = self.server_window.send_to_all_clients(message)
-        else:
-            # 发送给特定客户端
-            sent = self.server_window.send_to_client(target, message)
-
-        if sent:
-            # 清空发送区域
-            self.send_area.delete("1.0", tk.END)
+            if sent:
+                # 记录发送的消息
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                if target == "所有客户端":
+                    log_msg = f"[{timestamp}] >>> 广播消息: {message}\n"
+                else:
+                    log_msg = f"[{timestamp}] >>> 发送到 {target}: {message}\n"
+                self.receive_area.config(state=tk.NORMAL)
+                self.receive_area.insert(tk.END, log_msg)
+                self.receive_area.see(tk.END)
+                self.receive_area.config(state=tk.DISABLED)
+                # 清空发送区域
+                self.send_area.delete("1.0", tk.END)
+        except Exception as e:
+            # 显示错误信息
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            error_msg = f"[{timestamp}] !!! 发送失败: {str(e)}\n"
+            self.receive_area.config(state=tk.NORMAL)
+            self.receive_area.insert(tk.END, error_msg)
+            self.receive_area.see(tk.END)
+            self.receive_area.config(state=tk.DISABLED)
