@@ -43,11 +43,12 @@ class Plugin(PluginBase):
                 if data.startswith(self.STX):
                     if data.endswith(self.ETX) or data.endswith(self.ETB):
                         msg_content = data[1:-1].decode('ascii', errors='ignore')
-                        self.log(f"收到消息帧: {msg_content}")
-                        self.current_frame.append(msg_content)
+                        messages = msg_content.split('\r')
+                        self.log(f"收到消息帧: {messages}")
+                        self.current_frame.append(messages)
 
                         if data.endswith(self.ETX):
-                            self.message_buffer.extend(self.current_frame)
+                            self.message_buffer.extend([m for m in self.current_frame if m])
                             self.current_frame.clear()
                             self.expecting_eot = True
 

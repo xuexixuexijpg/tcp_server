@@ -62,7 +62,10 @@ class TlsClientPanel(ttk.Frame):
         self.input_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.send_btn = ttk.Button(input_frame, text="发送", command=self.send_message)
-        self.send_btn.pack(side=tk.RIGHT, padx=5)
+        self.send_btn.pack(side=tk.BOTTOM, padx=5)
+
+        self.send_astm_btn = ttk.Button(input_frame, text="发送ASTM", command=self.send_astm_message)
+        self.send_astm_btn.pack(side=tk.BOTTOM, pady=2)
 
     def _get_local_ips(self):
         """Get list of local IP addresses"""
@@ -248,3 +251,53 @@ class TlsClientPanel(ttk.Frame):
         self.ip_combo.config(state='normal')
         self.port_entry.config(state='normal')
         self.log("已断开连接")
+
+    def send_astm_message(self):
+        """发送ASTM格式的消息"""
+        if not self.client_socket:
+            self.log("未连接到服务器")
+            return
+
+        message = self.input_text.get("1.0", tk.END).strip()
+        if not message:
+            return
+
+        try:
+            # ASTM 控制字符
+            ENQ = b'\x05'  # 询问
+            STX = b'\x02'  # 开始传输
+            ETX = b'\x03'  # 结束传输
+            EOT = b'\x04'  # 传输结束
+
+            # 发送顺序：ENQ -> 等待ACK -> 发送数据帧 -> 等待ACK -> 发送EOT
+            # 1. 发送 ENQ
+            self.client_socket.send(ENQ)
+            self.log("已发送 ENQ")
+
+            # 2. 等待 ACK
+            response = self.client_socket.recv(1024)
+            if response != b'\x06':  # ACK
+                self.log("未收到 ACK，发送取消")
+                return
+
+            # 3. 发送数据帧
+            frame = STX + message.encode('ascii', errors='ignore') + ETX
+            self.client_socket.send(frame)
+            self.log(f"已发送数据帧: {message}")
+
+            # 4. 等待 ACK
+            response = self.client_socket.recv(1024)
+            if response != b'\x06':  # ACK
+                self.log("未收到数据帧 ACK，发送取消")
+                return
+
+            # 5. 发送 EOT
+            self.client_socket.send(EOT)
+            self.log("已发送 EOT")
+
+            # 清空输入框
+            self.input_text.delete("1.0", tk.END)
+
+        except Exception as e:
+            self.log(f"发送ASTM消息失败: {str(e)}")
+            self.disconnect()

@@ -129,24 +129,19 @@ class BaseServer:
                     self.message_received_callback(client_socket, address, display_data)
                 return
 
-            self.log("使用插件处理消息")
+
             # 使用插件处理数据
-            display_data = self.plugin_manager.process_data(
-                client_id, data, 'incoming'
-            )
+            response = self.plugin_manager.process_data(client_id, data, 'incoming')
+            self.log(f"使用插件处理消息:{response}")
+            # 如果收到响应数据，直接发送给客户端
+            if response:
+                self.send_to_client(client_id, response)
 
-            # 通知UI显示消息
-            if display_data and self.message_received_callback:
-                self.message_received_callback(client_socket, address, str(display_data))
+            # 通知UI显示消息（可选）
+            if self.message_received_callback:
+                display_data = str(data)
+                self.message_received_callback(client_socket, address, display_data)
 
-            # 处理要发送的响应数据
-            response_data = self.plugin_manager.process_data(
-                client_id, data, 'outgoing'
-            )
-
-            # 发送响应数据
-            if response_data:
-                self.send_to_client(client_id, response_data)
         except Exception as e:
             self.log(f"处理消息时出错: {str(e)}")
 
