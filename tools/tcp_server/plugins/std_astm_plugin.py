@@ -32,7 +32,7 @@ class Plugin(PluginBase):
         try:
             # ENQ处理
             if data == self.ENQ:
-                print("收到 ENQ")
+                self.log("收到 ENQ")
                 self.message_buffer.clear()
                 self.current_frame.clear()
                 self.expecting_eot = False
@@ -43,7 +43,7 @@ class Plugin(PluginBase):
                 if data.startswith(self.STX):
                     if data.endswith(self.ETX) or data.endswith(self.ETB):
                         msg_content = data[1:-1].decode('ascii', errors='ignore')
-                        print(f"收到消息帧: {msg_content}")
+                        self.log(f"收到消息帧: {msg_content}")
                         self.current_frame.append(msg_content)
 
                         if data.endswith(self.ETX):
@@ -55,10 +55,10 @@ class Plugin(PluginBase):
 
             # EOT处理
             if data == self.EOT:
-                print("收到 EOT")
+                self.log("收到 EOT")
                 if self.message_buffer and self.expecting_eot:
                     response = self._process_complete_message()
-                    print(f"发送响应: {response}")
+                    self.log(f"发送响应: {response}")
                     # 处理完成后清空缓冲
                     self.message_buffer.clear()
                     self.current_frame.clear()
@@ -66,40 +66,39 @@ class Plugin(PluginBase):
                     return response
                 return self.ACK
 
-            print(f"收到无效消息: {data}")
+            self.log(f"收到无效消息: {data}")
             return self.NAK
 
         except Exception as e:
-            print(f"处理消息时出错: {str(e)}")
+            self.log(f"处理消息时出错: {str(e)}")
             return self.NAK
 
     def _process_complete_message(self) -> bytes:
         """处理完整的消息序列"""
         try:
             full_message = '\r'.join(self.message_buffer)
-            print(f"处理完整消息: {full_message}")
-
+            self.log(f"处理完整消息: {full_message}")
             message_lines = full_message.split('\r')
             for line in message_lines:
                 if line.startswith('Q|'):
-                    print(f"解析查询消息: {line}")
+                    self.log(f"解析查询消息: {line}")
                     sample_id = self._extract_sample_id(line)
                     if sample_id:
-                        print(f"提取到样本号: {sample_id}")
+                        self.log(f"提取到样本号: {sample_id}")
                         return self._create_result_response(sample_id, self.test_items)
                     else:
-                        print("未能提取到有效的样本号")
+                        self.log("未能提取到有效的样本号")
                         return self._create_error_response("Invalid sample ID")
-
-            print("未找到查询记录")
+            self.log("未找到查询记录")
             return self.NAK
 
         except Exception as e:
-            print(f"处理完整消息时出错: {str(e)}")
+            self.log(f"处理完整消息时出错: {str(e)}")
             return self._create_error_response(str(e))
 
     def _extract_sample_id(self, message):
         """从ASTM消息提取样本ID"""
+        self.log(f"提取样本ID: {message}")
         try:
             fields = message.split('|')
             if len(fields) >= 3:
@@ -109,7 +108,7 @@ class Plugin(PluginBase):
                         return sample_data[1]
                     return fields[2] if fields[2] else None
         except Exception as e:
-            print(f"提取样本号时出错: {str(e)}")
+            self.log(f"提取样本号时出错: {str(e)}")
         return None
 
     def process_outgoing(self, data: bytes) -> bytes:

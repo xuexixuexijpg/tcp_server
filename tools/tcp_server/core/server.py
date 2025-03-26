@@ -50,7 +50,27 @@ class BaseServer:
 
     def stop(self):
         """停止服务器"""
-        self.running = False
+        if not self.running:
+            return
+        try:
+            self.running = False
+            # 2. 创建临时连接来打破 accept() 阻塞
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tmp_sock:
+                    tmp_sock.settimeout(0.1)
+                    tmp_sock.connect((self.host, self.port))
+            except:
+                pass
+            # 3. 关闭服务器 socket，不管是否成功
+            if self.server_socket:
+                try:
+                    self.server_socket.close()
+                except:
+                    pass
+                self.server_socket = None
+        except Exception as e:
+            if self.log_callback:
+                self.log_callback(f"停止服务器时出错: {str(e)}")
 
     def shutdown(self):
         """关闭服务器并清理资源"""
@@ -171,11 +191,11 @@ class TCPServer(BaseServer):
                     client_thread = threading.Thread(
                         target=handle_client_tcp,
                         args=(client_socket, addr, self),
-                        name=f"ClientThread-{client_id}"  # 添加线程名称
+                        name=f"ClientThread-{client_id}",  # 添加线程名称
+                        daemon= True
                     )
-                    client_thread.daemon = True
-                    client_thread.start()
                     self.active_threads.append(client_thread)
+                    client_thread.start()
 
                     # 通知UI有新客户端连接
                     if self.client_connected_callback:
@@ -303,11 +323,11 @@ class TLSServer(BaseServer):
                         client_thread = threading.Thread(
                             target=handle_client_tls,
                             args=(tls_socket, addr, self.ssl_context, self),
-                            name=f"TLSClientThread-{client_id}"  # 添加线程名称
+                            name=f"TLSClientThread-{client_id}",  # 添加线程名称
+                            daemon= True
                         )
-                        client_thread.daemon = True
-                        client_thread.start()
                         self.active_threads.append(client_thread)
+                        client_thread.start()
                         # 通知UI有新客户端连接
                         if self.client_connected_callback:
                                 self.client_connected_callback(tls_socket, addr)

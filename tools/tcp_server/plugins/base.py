@@ -8,6 +8,19 @@ from typing import Optional, Dict, Any
 
 class PluginBase(ABC):
     """插件基类"""
+    def __init__(self):
+        """初始化插件基类"""
+        self._log_callback = None
+
+    def set_log_callback(self, callback):
+        """设置日志回调函数"""
+        self._log_callback = callback
+
+    def log(self, message):
+        """记录日志，通过回调函数将日志放入队列"""
+        if self._log_callback:
+            self._log_callback(f"{self.name}: {message}")
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -40,9 +53,11 @@ class PluginBase(ABC):
 
 class PluginManager:
     """插件管理器"""
-    def __init__(self):
+    def __init__(self,log_callback=None):
         self.plugins: Dict[str, Dict] = {}
         self.client_plugins: Dict[str, str] = {}
+        self._log_callback = log_callback
+
 
     def unload_client_plugin(self, client_id):
         """卸载客户端的插件"""
@@ -82,6 +97,7 @@ class PluginManager:
 
             # 创建插件实例
             plugin = module.create_plugin()
+            plugin.set_log_callback(self._log_callback)
 
             # 验证插件类型
             if not isinstance(plugin, PluginBase):

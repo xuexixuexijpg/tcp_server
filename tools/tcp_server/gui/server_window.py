@@ -15,7 +15,7 @@ import ipaddress
 from core.base_window import BaseWindow
 from security.cert_generator import generate_tls_cert_openssl
 from security.generate_tls_cert import generate_tls_cert
-
+from queue import Queue
 from .certificate_dialog import CertificateGenerationDialog
 from .tls_config_panel import TlsConfigPanel
 from .client_manager_panel import ClientManagerPanel
@@ -37,7 +37,10 @@ class ServerWindow(BaseWindow):
         self.server_thread = None
         self.client_sockets = {}  # {client_id: (socket)}
         # 添加插件管理器初始化
-        self.plugin_manager = PluginManager()
+        self.log_queue = Queue()
+        self.log_thread = threading.Thread(target=self._process_logs, daemon=True)
+        self.log_thread.start()
+        self.plugin_manager = PluginManager(log_callback=self.queue_log)
         # 创建证书目录
         self.cert_base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "certs")
         os.makedirs(self.cert_base_dir, exist_ok=True)
@@ -498,12 +501,13 @@ class ServerWindow(BaseWindow):
         # 记录日志
         self.log(f"客户端 {client_id} 已连接")
 
-    def on_client_disconnected(self, client_socket):
+    def on_client_disconnected(self, client_id):
         """当客户端断开连接时被调用"""
-        for client_id, sock in list(self.client_sockets.items()):
-            if sock == client_socket:
-                self.remove_client(client_id)
-                break
+        try:
+            # 直接使用提供的 client_id 移除客户端
+            self.remove_client(client_id)
+        except Exception as e:
+            self.log(f"处理客户端断开连接失败: {e}", "ERROR")
 
     def on_message_received(self, client_socket, address, data):
         """当收到客户端消息时被调用"""
@@ -589,31 +593,21 @@ class ServerWindow(BaseWindow):
             # 获取客户端socket并关闭连接
             client_socket = self.client_sockets[client_id]
 
+            # 从字典中删除
+            del self.client_sockets[client_id]
+
+            # 更新客户端列表 UI (确保在主线程中执行)
+            self.root.after(0, lambda: self.client_manager.remove_client(client_id))
+
             try:
-                # 先发送断开连接的消息给客户端
-                disconnect_message = json.dumps({
-                    "type": "disconnect",
-                    "message": "Server closing connection"
-                })
-                client_socket.sendall(disconnect_message.encode())
-                # 等待一小段时间让客户端处理消息
-                time.sleep(0.1)
                 # 关闭连接
-                client_socket.shutdown(socket.SHUT_RDWR)
                 client_socket.close()
             except:
                 pass
 
-            # 从字典中删除
-            del self.client_sockets[client_id]
-
-            # 更新客户端列表
-            self.client_manager.remove_client(client_id)
-
             # 记录日志
             if notify:
                 self.log(f"客户端 {client_id} 已断开连接")
-
         except Exception as e:
             self.log(f"移除客户端 {client_id} 时出错: {str(e)}", "ERROR")
 
@@ -642,25 +636,22 @@ class ServerWindow(BaseWindow):
         try:
             # 停止服务器
             if self.server:
+                self.server.running = False
+            # 1. 停止服务器但不等待
+            if self.server:
                 self.server.stop()
-                self.server = None
 
-            # 等待服务器线程结束
-            if self.server_thread and self.server_thread.is_alive():
-                self.server_thread.join(2.0)
-                self.server_thread = None
-
-            # 断开所有客户端连接
-            for client_id in list(self.client_sockets.keys()):
-                try:
-                    client_socket, _ = self.client_sockets[client_id]
-                    client_socket.close()
-                except:
-                    pass
+            # 2. 直接清理所有资源
+            self.client_sockets.clear()
+            self.server = None
+            self.server_thread = None  # 不再等待线程
 
             # 清理资源
             self.client_sockets.clear()
-
+            self.server = None
+            self.server_thread = None
+            # 等待日志队列处理完成
+            # self.log_queue.join()
         except Exception as e:
             print(f"清理资源时出错: {e}")
 
@@ -672,3 +663,20 @@ class ServerWindow(BaseWindow):
                 self._cleanup()
             except Exception as e:
                 print(f"主窗口关闭时清理资源出错: {e}")
+
+
+    def queue_log(self, message, level="INFO"):
+        """将日志消息放入队列"""
+        self.log_queue.put((message, level))
+
+    def _process_logs(self):
+        """处理日志队列的线程"""
+        while True:
+            try:
+                message, level = self.log_queue.get()
+                # 使用 after 方法确保在主线程中更新UI
+                self.root.after(0, lambda m=message, l=level: self.log(m, l))
+            except Exception as e:
+                print(f"处理日志队列时出错: {e}")
+            finally:
+                self.log_queue.task_done()
