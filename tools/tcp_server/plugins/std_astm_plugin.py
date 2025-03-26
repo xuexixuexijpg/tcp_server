@@ -22,7 +22,7 @@ class Plugin(PluginBase):
         self.ETX = b'\x03'  # 结束传输
         self.EOT = b'\x04'  # 传输结束
         self.ETB = b'\x17'  # 块结束
-        # 添加消息缓冲和状态跟踪
+        # 消息缓冲和状态跟踪
         self.message_buffer = []
         self.current_frame = []
         self.expecting_eot = False
@@ -30,33 +30,22 @@ class Plugin(PluginBase):
     def process_incoming(self, data: bytes) -> bytes:
         """处理接收到的数据"""
         try:
-            # 检查是否为 ENQ
+            # ENQ处理
             if data == self.ENQ:
+                print("收到 ENQ")
                 self.message_buffer.clear()
                 self.current_frame.clear()
                 self.expecting_eot = False
                 return self.ACK
 
-            # EOT 处理
-            if data == self.EOT:
-                if self.message_buffer:
-                    # 处理完整的消息序列
-                    response = self._process_complete_message()
-                    self.message_buffer.clear()
-                    self.current_frame.clear()
-                    self.expecting_eot = False
-                    return response
-                return self.ACK
-
-            # 检查是否为普通 ASTM 消息
+            # 普通消息处理
             if isinstance(data, bytes) and len(data) > 2:
                 if data.startswith(self.STX):
                     if data.endswith(self.ETX) or data.endswith(self.ETB):
-                        # 提取消息内容
                         msg_content = data[1:-1].decode('ascii', errors='ignore')
+                        print(f"收到消息帧: {msg_content}")
                         self.current_frame.append(msg_content)
 
-                        # 如果是 ETX 结尾，说明是完整帧
                         if data.endswith(self.ETX):
                             self.message_buffer.extend(self.current_frame)
                             self.current_frame.clear()
@@ -64,31 +53,49 @@ class Plugin(PluginBase):
 
                         return self.ACK
 
+            # EOT处理
+            if data == self.EOT:
+                print("收到 EOT")
+                if self.message_buffer and self.expecting_eot:
+                    response = self._process_complete_message()
+                    print(f"发送响应: {response}")
+                    # 处理完成后清空缓冲
+                    self.message_buffer.clear()
+                    self.current_frame.clear()
+                    self.expecting_eot = False
+                    return response
+                return self.ACK
+
+            print(f"收到无效消息: {data}")
             return self.NAK
 
         except Exception as e:
-            return f"Error processing message: {str(e)}".encode()
+            print(f"处理消息时出错: {str(e)}")
+            return self.NAK
+
     def _process_complete_message(self) -> bytes:
         """处理完整的消息序列"""
         try:
-            # 合并所有消息
             full_message = '\r'.join(self.message_buffer)
+            print(f"处理完整消息: {full_message}")
 
-            # 解析消息类型
             message_lines = full_message.split('\r')
             for line in message_lines:
-                # 查找查询记录 (Q|1|...)
                 if line.startswith('Q|'):
+                    print(f"解析查询消息: {line}")
                     sample_id = self._extract_sample_id(line)
                     if sample_id:
+                        print(f"提取到样本号: {sample_id}")
                         return self._create_result_response(sample_id, self.test_items)
                     else:
-                        return self._create_error_response("无效的样本ID")
+                        print("未能提取到有效的样本号")
+                        return self._create_error_response("Invalid sample ID")
 
-            # 如果没有找到查询记录，返回NAK
+            print("未找到查询记录")
             return self.NAK
 
         except Exception as e:
+            print(f"处理完整消息时出错: {str(e)}")
             return self._create_error_response(str(e))
 
     def _extract_sample_id(self, message):
@@ -96,21 +103,23 @@ class Plugin(PluginBase):
         try:
             fields = message.split('|')
             if len(fields) >= 3:
-                sample_data = fields[2].split('^')
-                if len(sample_data) >= 2:
-                    return sample_data[1]
-        except:
-            pass
+                if fields[0] == 'Q' and fields[1] == '1':
+                    sample_data = fields[2].split('^')
+                    if len(sample_data) >= 2:
+                        return sample_data[1]
+                    return fields[2] if fields[2] else None
+        except Exception as e:
+            print(f"提取样本号时出错: {str(e)}")
         return None
 
     def process_outgoing(self, data: bytes) -> bytes:
-            """处理要发送的数据"""
-            try:
-                if isinstance(data, str):
-                    return data.encode('ascii')
-                return data
-            except Exception as e:
-                return str(e).encode()
+        """处理要发送的数据"""
+        try:
+            if isinstance(data, str):
+                return data.encode('ascii')
+            return data
+        except Exception as e:
+            return str(e).encode()
 
     def _create_result_response(self, sample_id, items):
         """创建ASTM响应消息"""
