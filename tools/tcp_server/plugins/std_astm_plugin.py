@@ -22,43 +22,74 @@ class Plugin(PluginBase):
         self.ETX = b'\x03'  # 结束传输
         self.EOT = b'\x04'  # 传输结束
         self.ETB = b'\x17'  # 块结束
+        # 添加消息缓冲和状态跟踪
+        self.message_buffer = []
+        self.current_frame = []
+        self.expecting_eot = False
 
     def process_incoming(self, data: bytes) -> bytes:
         """处理接收到的数据"""
         try:
             # 检查是否为 ENQ
             if data == self.ENQ:
+                self.message_buffer.clear()
+                self.current_frame.clear()
+                self.expecting_eot = False
+                return self.ACK
+
+            # EOT 处理
+            if data == self.EOT:
+                if self.message_buffer:
+                    # 处理完整的消息序列
+                    response = self._process_complete_message()
+                    self.message_buffer.clear()
+                    self.current_frame.clear()
+                    self.expecting_eot = False
+                    return response
                 return self.ACK
 
             # 检查是否为普通 ASTM 消息
             if isinstance(data, bytes) and len(data) > 2:
-                if data.startswith(self.STX) and (data.endswith(self.ETX) or data.endswith(self.ETB)):
-                    # 处理 ASTM 消息
-                    msg_content = data[1:-1].decode('ascii', errors='ignore')
+                if data.startswith(self.STX):
+                    if data.endswith(self.ETX) or data.endswith(self.ETB):
+                        # 提取消息内容
+                        msg_content = data[1:-1].decode('ascii', errors='ignore')
+                        self.current_frame.append(msg_content)
 
-                    # 处理查询记录
-                    if msg_content.startswith('Q|'):
-                        sample_id = self._extract_sample_id(msg_content)
-                        if not sample_id:
-                            return self._create_error_response("无效的样本ID")
-                        return self._create_result_response(sample_id, self.test_items)
+                        # 如果是 ETX 结尾，说明是完整帧
+                        if data.endswith(self.ETX):
+                            self.message_buffer.extend(self.current_frame)
+                            self.current_frame.clear()
+                            self.expecting_eot = True
 
-                    # 回复 ACK
-                    return self.ACK
+                        return self.ACK
 
-            return data
+            return self.NAK
 
         except Exception as e:
             return f"Error processing message: {str(e)}".encode()
-
-    def process_outgoing(self, data: bytes) -> bytes:
-        """处理要发送的数据"""
+    def _process_complete_message(self) -> bytes:
+        """处理完整的消息序列"""
         try:
-            if isinstance(data, str):
-                return data.encode('ascii')
-            return data
+            # 合并所有消息
+            full_message = '\r'.join(self.message_buffer)
+
+            # 解析消息类型
+            message_lines = full_message.split('\r')
+            for line in message_lines:
+                # 查找查询记录 (Q|1|...)
+                if line.startswith('Q|'):
+                    sample_id = self._extract_sample_id(line)
+                    if sample_id:
+                        return self._create_result_response(sample_id, self.test_items)
+                    else:
+                        return self._create_error_response("无效的样本ID")
+
+            # 如果没有找到查询记录，返回NAK
+            return self.NAK
+
         except Exception as e:
-            return str(e).encode()
+            return self._create_error_response(str(e))
 
     def _extract_sample_id(self, message):
         """从ASTM消息提取样本ID"""
@@ -71,6 +102,15 @@ class Plugin(PluginBase):
         except:
             pass
         return None
+
+    def process_outgoing(self, data: bytes) -> bytes:
+            """处理要发送的数据"""
+            try:
+                if isinstance(data, str):
+                    return data.encode('ascii')
+                return data
+            except Exception as e:
+                return str(e).encode()
 
     def _create_result_response(self, sample_id, items):
         """创建ASTM响应消息"""
