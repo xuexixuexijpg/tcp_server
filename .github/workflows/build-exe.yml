@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - master
-  workflow_dispatch:  # Keep manual trigger option
+  workflow_dispatch:
 
 jobs:
   build:
@@ -39,6 +39,9 @@ jobs:
       - name: Build with PyInstaller
         run: |
           python build_exe.py
+          cd release
+          for %%f in (*.zip) do ren "%%f" "tool-list.zip"
+        shell: cmd
         env:
           PYTHONIOENCODING: utf-8
           PYTHONUTF8: 1
@@ -53,17 +56,17 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.build_version }}
-          name: TCP Server ${{ steps.version.outputs.build_version }}
+          name: Tool List ${{ steps.version.outputs.build_version }}
           body: |
             Automated build from master branch
-            
+
             Build Time: ${{ github.event.repository.updated_at }}
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref_name }}
-            
+
             **Changes:**
             ${{ github.event.head_commit.message }}
-          files: release/*.zip
+          files: release/tool-list.zip
           draft: false
           prerelease: false
         env:
