@@ -6,7 +6,6 @@ from tools.tcp_server.plugins.base import PluginBase
 class Plugin(PluginBase):
     """ASTM协议处理插件"""
 
-    # 将 name 改为属性装饰器
     @property
     def name(self) -> str:
         """插件名称"""
@@ -14,57 +13,49 @@ class Plugin(PluginBase):
 
     def __init__(self):
         # 测试项目映射表
-        self.test_items = {
-            "A0001": ["GLU", "ALT", "AST"],
-            "A0002": ["HGB", "WBC", "PLT"],
-            "A0003": ["CRP", "PCT"]
-        }
+        self.test_items = ["Na", "ALT", "AST", "HGB", "WBC", "K", "CRP", "PCT"]
+        # ASTM 控制字符
+        self.ENQ = b'\x05'  # 询问
+        self.ACK = b'\x06'  # 确认
+        self.NAK = b'\x15'  # 否认
+        self.STX = b'\x02'  # 开始传输
+        self.ETX = b'\x03'  # 结束传输
+        self.EOT = b'\x04'  # 传输结束
+        self.ETB = b'\x17'  # 块结束
 
-    def process_incoming(self, data: bytes) -> str:
-        """处理接收到的数据
-        Args:
-            data: 接收到的原始字节数据
-        Returns:
-            str: 处理后的消息或None
-        """
+    def process_incoming(self, data: bytes) -> bytes:
+        """处理接收到的数据"""
         try:
-            # 将字节数据转换为字符串
-            message = str(data)
+            # 检查是否为 ENQ
+            if data == self.ENQ:
+                return self.ACK
 
-            # 检查ASTM格式
-            if not message.startswith('\x02') or not message.endswith('\x03'):
-                return data
+            # 检查是否为普通 ASTM 消息
+            if isinstance(data, bytes) and len(data) > 2:
+                if data.startswith(self.STX) and (data.endswith(self.ETX) or data.endswith(self.ETB)):
+                    # 处理 ASTM 消息
+                    msg_content = data[1:-1].decode('ascii', errors='ignore')
 
-            # 解析消息内容
-            msg_content = message[1:-1]  # 移除STX/ETX
+                    # 处理查询记录
+                    if msg_content.startswith('Q|'):
+                        sample_id = self._extract_sample_id(msg_content)
+                        if not sample_id:
+                            return self._create_error_response("无效的样本ID")
+                        return self._create_result_response(sample_id, self.test_items)
 
-            # 处理查询记录
-            if msg_content.startswith('Q|'):
-                sample_id = self._extract_sample_id(msg_content)
-                if not sample_id:
-                    return self._create_error_response("无效的样本ID")
+                    # 回复 ACK
+                    return self.ACK
 
-                items = self.test_items.get(sample_id, [])
-                if not items:
-                    return self._create_error_response(f"未找到样本 {sample_id} 的测试项目")
-
-                return self._create_result_response(sample_id, items)
-
-            return message
+            return data
 
         except Exception as e:
-            return f"Error processing message: {str(e)}"
+            return f"Error processing message: {str(e)}".encode()
 
-    def process_outgoing(self, data: str) -> bytes:
-        """处理要发送的数据
-        Args:
-            data: 要发送的数据
-        Returns:
-            bytes: 处理后的字节数据
-        """
+    def process_outgoing(self, data: bytes) -> bytes:
+        """处理要发送的数据"""
         try:
             if isinstance(data, str):
-                return data.encode()
+                return data.encode('ascii')
             return data
         except Exception as e:
             return str(e).encode()
@@ -85,23 +76,26 @@ class Plugin(PluginBase):
         """创建ASTM响应消息"""
         now = datetime.now().strftime("%Y%m%d%H%M%S")
         response = [
-            f"\x02H|\\^&|||Host^1|||||||||{now}\x0D",
-            f"P|1||||{sample_id}|||||\x0D",
-            f"O|1|{sample_id}||{'^'.join(items)}|||||||N||||||||||||Q\x0D",
-            f"L|1|N\x0D\x03"
+            self.STX,
+            f"H|\\^&|||Host^1|||||||||{now}\r".encode('ascii'),
+            f"P|1||||{sample_id}|||||\r".encode('ascii'),
+            f"O|1|{sample_id}||{'^'.join(items)}|||||||N||||||||||||Q\r".encode('ascii'),
+            f"L|1|N\r".encode('ascii'),
+            self.ETX
         ]
-        return ''.join(response)
+        return b''.join(response)
 
     def _create_error_response(self, error_msg):
         """创建错误响应"""
         now = datetime.now().strftime("%Y%m%d%H%M%S")
         response = [
-            f"\x02H|\\^&|||Host^1|||||||||{now}\x0D",
-            f"Q|1|E|{error_msg}\x0D",
-            f"L|1|N\x0D\x03"
+            self.STX,
+            f"H|\\^&|||Host^1|||||||||{now}\r".encode('ascii'),
+            f"Q|1|E|{error_msg}\r".encode('ascii'),
+            f"L|1|N\r".encode('ascii'),
+            self.ETX
         ]
-        return ''.join(response)
+        return b''.join(response)
 
-# 创建插件实例的工厂函数
 def create_plugin():
     return Plugin()

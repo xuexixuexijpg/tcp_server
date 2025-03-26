@@ -54,18 +54,35 @@ class BaseServer:
 
     def shutdown(self):
         """关闭服务器并清理资源"""
+        self.running = False  # First stop the main loop
         try:
+            # Force close all client connections
+            if hasattr(self, 'client_sockets'):
+                for client_id, sock in list(self.client_sockets.items()):
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                        sock.close()
+                    except:
+                        pass
+                    if hasattr(self, 'remove_client'):
+                        self.remove_client(client_id)
+
+            # Close server socket
             if self.server_socket:
+                try:
+                    self.server_socket.shutdown(socket.SHUT_RDWR)
+                except:
+                    pass
                 self.server_socket.close()
                 self.log("服务器套接字已关闭")
-        except:
-            pass
 
-        # 等待所有活跃线程完成
-        for thread in self.active_threads:
-            if thread.is_alive():
-                thread.join(1.0)
-
+        except Exception as e:
+            self.log(f"关闭服务器时出错: {str(e)}")
+        finally:
+            # Wait for threads with timeout
+            for thread in self.active_threads:
+                if thread.is_alive():
+                    thread.join(timeout=0.5)  # Shorter timeout per thread
         self.log("服务器已关闭")
 
     def send_to_client(self, client_addr, message):
@@ -75,11 +92,15 @@ class BaseServer:
     def process_message(self, client_socket, address, data):
         """处理收到的消息"""
         client_id = f"{address[0]}:{address[1]}"
-
+        # 检查是否为TLS加密连接
+        is_encrypted = self.is_tls_socket(client_socket)
+        encryption_status = "TLS加密" if is_encrypted else "未加密"
         try:
             # 检查数据是否为空
             if not data:
                 return
+            # 在日志中显示加密状态
+            self.log(f"收到来自 {client_id} 的{encryption_status}消息")
             # 当没有配置插件时，直接显示原始数据
             if not hasattr(self, 'plugin_manager') or not self.plugin_manager.client_plugins.get(client_id):
                 # 尝试解码为字符串
@@ -109,6 +130,11 @@ class BaseServer:
         except Exception as e:
             self.log(f"处理消息时出错: {str(e)}")
 
+    @staticmethod
+    def is_tls_socket(socket_obj):
+        """检查是否为TLS加密套接字"""
+        import ssl
+        return isinstance(socket_obj, ssl.SSLSocket)
 class TCPServer(BaseServer):
     """TCP服务器实现"""
 
@@ -259,6 +285,12 @@ class TLSServer(BaseServer):
                             client_socket,
                             server_side=True
                         )
+                        # 验证TLS连接是否成功建立
+                        cipher = tls_socket.cipher()
+                        if not cipher:
+                            raise ssl.SSLError("TLS连接未能建立加密通道")
+                        # 打印TLS连接信息
+                        self.log(f"TLS连接成功建立 - 使用加密套件: {cipher[0]}")
                         self.log(f"当前连接协议版本 {tls_socket.version()}")
                         # 恢复原始超时设置
                         # tls_socket.settimeout(self.timeout)
@@ -344,13 +376,24 @@ class TLSServer(BaseServer):
             if hasattr(ssl_socket, 'close'):
                 ssl_socket.close()
             return False
-        # 将客户端添加到字典
-        self.client_sockets[client_id] = ssl_socket
+        # 验证TLS连接
+        try:
+            # 获取加密信息
+            cipher = ssl_socket.cipher()
+            if cipher:
+                self.log(f"客户端 {client_id} TLS连接信息:")
+                self.log(f"- 加密套件: {cipher[0]}")
+                self.log(f"- TLS版本: {ssl_socket.version()}")
+                self.log(f"- 协议: {ssl_socket.selected_alpn_protocol() or '未使用ALPN'}")
+            else:
+                raise ssl.SSLError("未建立加密连接")
 
-        # 调用回调通知新客户端连接 (如果需要的话)
-        # 注意：此方法中不调用回调，因为上面start中已经调用了
-        self.log(f"客户端已注册: {client_id}")
-        return True
+            self.client_sockets[client_id] = ssl_socket
+            return True
+        except Exception as e:
+            self.log(f"验证TLS连接失败: {e}")
+            ssl_socket.close()
+            return False
 
     def remove_client(self, client_id):
         """移除客户端连接"""

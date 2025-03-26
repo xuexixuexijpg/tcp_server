@@ -146,7 +146,7 @@ class TlsClientPanel(ttk.Frame):
             self.after(0, self._connect_success)
         except Exception as e:
             # Update GUI in main thread
-            self.after(0, lambda: self._connect_error(str(e)))
+            self.after(0, lambda: self._handle_connection_error(str(e)))
 
     def _connect_success(self):
         self.running = True
@@ -164,6 +164,14 @@ class TlsClientPanel(ttk.Frame):
         self.connect_btn.config(state=tk.NORMAL)
         self.log(f"连接失败: {error}")
 
+    def _handle_connection_error(self, error):
+        """Safely handle connection errors"""
+        try:
+            error_msg = str(error) if error else "Unknown connection error"
+            self._connect_error(error_msg)
+        except Exception as e:
+            print(f"Error handling connection failure: {e}")
+
     def disconnect(self):
         self.running = False
         if self.client_socket:
@@ -176,6 +184,8 @@ class TlsClientPanel(ttk.Frame):
             except:
                 pass
             self.client_socket = None
+            # Update GUI
+            self.after(0, self._update_gui_disconnect)
 
         # Update GUI
         self.connect_btn.config(text="连接")
@@ -221,3 +231,20 @@ class TlsClientPanel(ttk.Frame):
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.msg_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.msg_text.see(tk.END)
+
+    def _on_closing(self):
+        """Handle window closing"""
+        self.running = False
+        if self.client_socket:
+            self.disconnect()
+        # Wait for receive thread with timeout
+        if self.receive_thread and self.receive_thread.is_alive():
+            self.receive_thread.join(timeout=1.0)
+        self.root.destroy()
+
+    def _update_gui_disconnect(self):
+        """Update GUI elements after disconnect"""
+        self.connect_btn.config(text="连接", state=tk.NORMAL)
+        self.ip_combo.config(state='normal')
+        self.port_entry.config(state='normal')
+        self.log("已断开连接")
