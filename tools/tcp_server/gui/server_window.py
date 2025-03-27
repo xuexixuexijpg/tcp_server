@@ -2,31 +2,28 @@
 # -*- coding: utf-8 -*-
 
 import os
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 import socket
-import threading
 import ssl
-import json
-import time
+import threading
+import tkinter as tk
 from datetime import datetime
-import ipaddress
+from tkinter import ttk, messagebox
 
 from core.base_window import BaseWindow
 from security.cert_generator import generate_tls_cert_openssl
-from security.generate_tls_cert import generate_tls_cert
-from queue import Queue
 from .certificate_dialog import CertificateGenerationDialog
-from .tls_config_panel import TlsConfigPanel
 from .client_manager_panel import ClientManagerPanel
-from .message_panel import MessagingPanel
 from .log_panel import LogPanel
-from ..core.server import TLSServer,TCPServer
-from ..plugins.base import PluginManager
+from .message_panel import MessagingPanel
 from .tls_client_panel import TlsClientPanel
+from .tls_config_panel import TlsConfigPanel
+from ..core.logger import LogManager
+from ..core.server import TLSServer, TCPServer
+from ..plugins.base import PluginManager
+
 
 class ServerWindow(BaseWindow):
-    def __init__(self,master = None,window_number=None):
+    def __init__(self, master=None, window_number=None):
         self.window_number = window_number
         title = "TCP服务器"
         if window_number is not None:
@@ -36,11 +33,8 @@ class ServerWindow(BaseWindow):
         self.server = None
         self.server_thread = None
         self.client_sockets = {}  # {client_id: (socket)}
-        # 添加插件管理器初始化
-        self.log_queue = Queue()
-        self.log_thread = threading.Thread(target=self._process_logs, daemon=True)
-        self.log_thread.start()
-        self.plugin_manager = PluginManager(log_callback=self.queue_log)
+        log_manager = LogManager()
+        self.plugin_manager = PluginManager(log_callback=log_manager.log)
         # 创建证书目录
         self.cert_base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "certs")
         os.makedirs(self.cert_base_dir, exist_ok=True)
@@ -56,7 +50,7 @@ class ServerWindow(BaseWindow):
         # 创建主框架
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
+        log_manager = LogManager()
         # 创建选项卡控件
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill=tk.BOTH, expand=True)
@@ -66,11 +60,13 @@ class ServerWindow(BaseWindow):
         clients_tab = ttk.Frame(notebook)
         messages_tab = ttk.Frame(notebook)
         tls_test_tab = ttk.Frame(notebook)
+        log_tab = ttk.Frame(notebook)  # 新增日志选项卡
 
         notebook.add(server_tab, text="服务器")
         notebook.add(clients_tab, text="客户端")
         notebook.add(messages_tab, text="消息")
         notebook.add(tls_test_tab, text="TLS测试")
+        notebook.add(log_tab, text="日志")
 
         # 服务器选项卡 - 配置面板
         self._create_server_config(server_tab)
@@ -82,10 +78,14 @@ class ServerWindow(BaseWindow):
         # 消息选项卡 - 消息面板
         self.messaging_panel = MessagingPanel(messages_tab, self)
         self.messaging_panel.pack(fill=tk.BOTH, expand=True)
-        #测试
+        # 测试
         self.tls_test_panel = TlsClientPanel(tls_test_tab)
         self.tls_test_panel.pack(fill=tk.BOTH, expand=True)
 
+        self.log_tab_panel = LogPanel(log_tab)  # 在选项卡中创建新的日志面板
+        self.log_tab_panel.pack(fill=tk.BOTH, expand=True)  # 使用 expand=True 让日志面板填满选项卡
+        log_manager.add_text_widget(self.log_tab_panel.log_text)
+        log_manager.log("测试日志消息")
         # 日志面板 (所有选项卡下方)
         self.log_panel = LogPanel(main_frame)
         self.log_panel.pack(fill=tk.BOTH, expand=False, pady=(10, 0))
@@ -117,7 +117,6 @@ class ServerWindow(BaseWindow):
 
         # 服务器类型选择
         ttk.Label(config_frame, text="服务器类型:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-
 
         tcp_radio = ttk.Radiobutton(config_frame, text="普通TCP", variable=self.server_type, value="普通TCP",
                                     command=self._on_server_type_changed)
@@ -213,7 +212,7 @@ class ServerWindow(BaseWindow):
     def log(self, message, level="INFO"):
         """记录日志"""
         prefix = f"[窗口-{self.window_number}] " if self.window_number else ""
-        self.log_panel.log(f"{prefix}{message}", level)
+        self.log_panel.add_log(f"{prefix}{message}", level)
 
     def _on_ip_selected(self, event):
         """当IP选择变化时更新证书路径"""
@@ -235,15 +234,26 @@ class ServerWindow(BaseWindow):
         if not ip or ip == "0.0.0.0":
             ip = "localhost"  # 默认使用localhost证书
 
-        # 计算证书路径
-        cert_file = os.path.join(self.cert_base_dir, f"{ip}.crt")
-        key_file = os.path.join(self.cert_base_dir, f"{ip}.key")
+        # 定义可能的证书路径模式
+        possible_paths = [
+            # 直接在certs目录下的证书
+            (os.path.join(self.cert_base_dir, f"{ip}.crt"),
+             os.path.join(self.cert_base_dir, f"{ip}.key")),
+            # IP子目录下的证书
+            (os.path.join(self.cert_base_dir, ip, f"{ip}.crt"),
+             os.path.join(self.cert_base_dir, ip, f"{ip}.key")),
+        ]
+        # 检查所有可能的路径
+        cert_found = False
+        for cert_file, key_file in possible_paths:
+            if os.path.exists(cert_file) and os.path.exists(key_file):
+                self.cert_path_var.set(cert_file)
+                self.key_path_var.set(key_file)
+                self.log(f"已找到并加载IP {ip}的证书")
+                cert_found = True
+                break
 
-        # 如果证书存在，设置路径变量
-        if os.path.exists(cert_file) and os.path.exists(key_file):
-            self.cert_path_var.set(cert_file)
-            self.key_path_var.set(key_file)
-        else:
+        if not cert_found:
             self.cert_path_var.set("")
             self.key_path_var.set("")
             self.log(f"没有找到IP {ip}的证书，请生成或选择证书", "WARNING")
@@ -348,7 +358,7 @@ class ServerWindow(BaseWindow):
 
             except Exception as b:
                 # 修复这一行 - 将 e 作为 lambda 的默认参数传递
-                self.root.after(0, lambda e = b: handle_error(str(e)))
+                self.root.after(0, lambda e=b: handle_error(str(e)))
 
         # 完成生成后的处理
         def finish_generation(result):
@@ -379,6 +389,7 @@ class ServerWindow(BaseWindow):
 
         # 启动证书生成线程
         threading.Thread(target=generate_cert_thread, daemon=True).start()
+
     def start_server(self):
         """启动服务器"""
         try:
@@ -403,7 +414,7 @@ class ServerWindow(BaseWindow):
                 'client_disconnected_callback': self.on_client_disconnected,
                 'message_received_callback': self.on_message_received,
                 'plugin_manager': self.plugin_manager,  # 添加插件管理器
-                'master' : self.root
+                'master': self.root
             }
 
             # 根据服务器类型选择TLS或TCP
@@ -427,12 +438,12 @@ class ServerWindow(BaseWindow):
                     # ssl_context.check_hostname = False
                     # ssl_context.verify_mode = ssl.CERT_NONE
 
-                    self.server = TLSServer(ip, port, ssl_context,**callbacks)
+                    self.server = TLSServer(ip, port, ssl_context, **callbacks)
                 except Exception as e:
                     self.log(f"加载TLS证书失败: {str(e)}", "ERROR")
                     return
             else:
-                self.server = TCPServer(ip, port,**callbacks)
+                self.server = TCPServer(ip, port, **callbacks)
 
             # 设置回调函数
             self.server.client_connected_callback = self.on_client_connected
@@ -531,7 +542,7 @@ class ServerWindow(BaseWindow):
 
     def send_to_client(self, client_id, message):
         """发送消息到指定客户端"""
-            # 首先打印客户端ID和客户端套接字字典，帮助调试
+        # 首先打印客户端ID和客户端套接字字典，帮助调试
         print(f"正在尝试发送消息到客户端: {client_id}")
         self.log(f"客户端套接字字典键: {list(self.client_sockets.keys())}")
 
@@ -567,7 +578,6 @@ class ServerWindow(BaseWindow):
             self.log(f"发送消息到 {client_id} 失败: {e}")
             self.remove_client(client_id)
             return False
-
 
     def send_to_all_clients(self, message):
         """发送消息到所有客户端"""
@@ -635,6 +645,8 @@ class ServerWindow(BaseWindow):
     def _cleanup(self):
         """清理资源"""
         try:
+            log_manager = LogManager()
+            log_manager.remove_text_widget(self.log_tab_panel.log_text)
             # 停止服务器
             if self.server:
                 self.server.running = False
@@ -664,20 +676,3 @@ class ServerWindow(BaseWindow):
                 self._cleanup()
             except Exception as e:
                 print(f"主窗口关闭时清理资源出错: {e}")
-
-
-    def queue_log(self, message, level="INFO"):
-        """将日志消息放入队列"""
-        self.log_queue.put((message, level))
-
-    def _process_logs(self):
-        """处理日志队列的线程"""
-        while True:
-            try:
-                message, level = self.log_queue.get()
-                # 使用 after 方法确保在主线程中更新UI
-                self.root.after(0, lambda m=message, l=level: self.log(m, l))
-            except Exception as e:
-                print(f"处理日志队列时出错: {e}")
-            finally:
-                self.log_queue.task_done()

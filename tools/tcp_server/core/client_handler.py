@@ -4,7 +4,7 @@ import ssl
 import time
 
 
-def handle_client_tls(tls_socket, addr, context, server):
+def handle_client_tls(tls_socket, addr, server):
     """处理TLS客户端连接的函数"""
     client_id = f"{addr[0]}:{addr[1]}"
     try:

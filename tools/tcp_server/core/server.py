@@ -1,13 +1,16 @@
+import os
 import queue
+import selectors
 import socket
 import threading
 import time
 import ssl
 from queue import Queue
 
+from tools.tcp_server.core.client_handler import handle_client_tls
 from tools.tcp_server.model.Message import Message
 from tools.tcp_server.plugins.base import PluginManager
-
+from typing import Union
 
 class BaseServer:
     """服务器基类"""
@@ -17,6 +20,7 @@ class BaseServer:
                  client_disconnected_callback=None, message_received_callback=None,
                  plugin_manager=None
                  ):
+        self.selector = selectors.DefaultSelector()
         self.host = str(host)  # 确保 host 是字符串
         self.port = port
         self.backlog = backlog
@@ -34,10 +38,9 @@ class BaseServer:
         self.plugin_manager =  plugin_manager or PluginManager()
         # 添加消息队列和发送线程
         self.client_sockets = {}  # 移到基类
-        self.message_queue = Queue()
-        self.send_thread = threading.Thread(target=self._message_sender, daemon=True)
         self.send_lock = threading.Lock()  # 用于线程安全的客户端操作
-
+        # 添加写缓冲区
+        self.write_buffers = {}  # {client_id: [data1, data2, ...]}
 
     def log(self, message):
         """记录日志"""
@@ -85,6 +88,14 @@ class BaseServer:
         """关闭服务器并清理资源"""
         self.running = False  # First stop the main loop
         try:
+            if hasattr(self, 'selector'):
+                for key in list(self.selector.get_map().values()):
+                    try:
+                        self.selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                    except Exception as e:
+                        self.log(f"清理socket时出错: {e}")
+                self.selector.close()
             # Force close all client connections
             if hasattr(self, 'client_sockets'):
                 for client_id, sock in list(self.client_sockets.items()):
@@ -116,12 +127,14 @@ class BaseServer:
 
     def send_to_client(self, client_id, data):
         """向指定客户端发送消息"""
-        """将消息加入发送队列"""
         if not self.running:
             return False
         try:
-            message = Message(data=data, client_id=client_id)
-            self.message_queue.put(message)
+            client_socket = self.client_sockets.get(client_id)
+            if not client_socket:
+                self.log(f"客户端 {client_id} 不存在")
+                return False
+            self._send_message_to_client(client_id, client_socket, data)
             return True
         except Exception as e:
             self.log(f"加入消息队列失败: {e}")
@@ -129,41 +142,41 @@ class BaseServer:
 
     def process_message(self, client_socket, address, data):
         """处理收到的消息"""
-        client_id = f"{address[0]}:{address[1]}"
-        # 检查是否为TLS加密连接
-        is_encrypted = self.is_tls_socket(client_socket)
-        encryption_status = "TLS加密" if is_encrypted else "未加密"
-
         try:
+            client_id = f"{address[0]}:{address[1]}"
             # 检查数据是否为空
             if not data:
                 return
+            # 检查是否为TLS加密连接
+            is_encrypted = self.is_tls_socket(client_socket)
+            encryption_status = "TLS加密" if is_encrypted else "未加密"
             # 在日志中显示加密状态
             self.log(f"收到来自 {client_id} 的{encryption_status}消息")
 
             # 先通知UI显示原始消息
-            if self.message_received_callback:
-                display_data = str(data)
-                client_socket.master.after(0, self.message_received_callback, client_socket, address, display_data)
-
-
-            # 当没有配置插件时，直接显示原始数据
-            if not hasattr(self, 'plugin_manager') or not self.plugin_manager.client_plugins.get(client_id):
-                # 尝试解码为字符串
-                display_data = str(data)
+            try:
                 if self.message_received_callback:
-                    # 使用 tkinter 的 after 方法将 UI 更新调度到主线程
-                    client_socket.master.after(0, self.message_received_callback, client_socket, address, display_data)
-                return
-            # 使用插件处理数据
-            response = self.plugin_manager.process_data(client_id, data, 'incoming')
-            # 如果收到响应数据，直接发送给客户端
-            if response:
-                self.log(f"插件处理结果:{response}")
-                # 使用消息队列发送响应
-                self.send_to_client(client_id, response)
+                    if hasattr(client_socket, 'master'):
+                        client_socket.master.after(0, self.message_received_callback,
+                                                   client_socket, address, str(data))
+            except Exception as e:
+                self.log(f"回调处理错误: {e}")
+            # 当没有配置插件时，直接显示原始数据
+            try:
+                if hasattr(self, 'plugin_manager') and self.plugin_manager.client_plugins.get(client_id):
+                    response = self.plugin_manager.process_data(client_id, data, 'incoming')
+                    if response is not None:
+                        self.log(f"插件处理结果:{response}")
+                        self._send_message_to_client(client_id, client_socket, response)
+                    else:
+                        self.log("插件未返回数据，跳过发送")
+                else:
+                    self.log(f"没有插件处理消息，返回原数据 {str(data)}")
+                    self._send_message_to_client(client_id, client_socket, data)
+            except Exception as e:
+                self.log(f"消息处理错误: {e}")
         except Exception as e:
-            self.log(f"处理消息时出错: {str(e)}")
+                self.log(f"处理消息时出错: {str(e)}")
 
     @staticmethod
     def is_tls_socket(socket_obj):
@@ -171,48 +184,132 @@ class BaseServer:
         import ssl
         return isinstance(socket_obj, ssl.SSLSocket)
 
-    def _message_sender(self):
-        """消息发送线程"""
-        while self.running:
-            try:
-                message = self.message_queue.get(timeout=0.1)
-                if message.client_id is None:
-                    # 发送给所有客户端
-                    with self.send_lock:
-                        clients = list(self.client_sockets.items())
-                    for client_id, client_socket in clients:
-                        self._send_message_to_client(client_id, client_socket, message.data)
-                else:
-                    # 发送给特定客户端
-                    with self.send_lock:
-                        client_socket = self.client_sockets.get(message.client_id)
-                        if client_socket:
-                            self._send_message_to_client(message.client_id, client_socket, message.data)
-            except queue.Empty:
-                continue
-            except Exception as e:
-                self.log(f"消息发送线程错误: {e}")
-
-
     def broadcast(self, data):
         """广播消息给所有客户端"""
         if not self.running:
             return False
         try:
-            message = Message(data=data, client_id=None)  # None表示广播
-            self.message_queue.put(message)
-            return True
+            # 遍历所有客户端发送消息
+            success = False
+            with self.send_lock:
+                for client_id, client_socket in list(self.client_sockets.items()):
+                    try:
+                        self._send_message_to_client(client_id, client_socket, data)
+                        success = True
+                    except Exception as e:
+                        self.log(f"广播消息到客户端 {client_id} 失败: {e}")
+            return success
         except Exception as e:
-            self.log(f"加入广播消息队列失败: {e}")
-            return False
+            self.log(f"广播消息失败: {e}")
+        return False
 
-    def start_message_thread(self):
-        """启动消息发送线程"""
-        self.send_thread.start()
 
     def _send_message_to_client(self, client_id, client_socket, data):
         """实际发送消息的方法"""
-        raise NotImplementedError("子类必须实现_send_message_to_client方法")
+        try:
+            if isinstance(data, str):
+                data = data.encode()
+            elif not isinstance(data, bytes):
+                data = str(data).encode()
+
+            # 直接发送数据
+            total_sent = 0
+            data_len = len(data)
+            while total_sent < data_len:
+                try:
+                    sent = client_socket.send(data[total_sent:])
+                    if sent == 0:
+                        raise ConnectionError("连接已断开")
+                    total_sent += sent
+                    self.log(f"已发送 {total_sent}/{data_len} 字节到客户端 {client_id}")
+                except (ssl.SSLWantWriteError, BlockingIOError):
+                    # SSL缓冲区满或非阻塞socket暂时不可写
+                    time.sleep(0.01)
+                    continue
+                except Exception as e:
+                    self.log(f"发送数据到客户端 {client_id} 失败: {e}")
+                    self.handle_disconnect(client_socket, client_id)
+                    return False
+            return True
+        except Exception as e:
+            self.log(f"发送消息失败: {e}")
+            return False
+
+    def handle_write(self, sock, client_id):
+        """处理写事件"""
+        if client_id in self.write_buffers and self.write_buffers[client_id]:
+            data = self.write_buffers[client_id][0]
+            try:
+                sent = sock.send(data)
+                if sent < len(data):
+                    # 部分发送,保留剩余数据
+                    self.write_buffers[client_id][0] = data[sent:]
+                else:
+                    # 完全发送,移除已发送的数据
+                    self.write_buffers[client_id].pop(0)
+
+                # 如果没有更多数据要发送,取消写事件监听
+                if not self.write_buffers[client_id]:
+                    self.selector.modify(sock, selectors.EVENT_READ,
+                                         {"addr": sock.getpeername()})
+                    del self.write_buffers[client_id]
+
+            except (BlockingIOError, ssl.SSLWantWriteError):
+                # 资源暂时不可用,下次再试
+                return
+            except Exception as e:
+                self.log(f"发送数据到 {client_id} 失败: {e}")
+                self.handle_disconnect(sock, client_id)
+
+    def handle_disconnect(self, sock, client_id):
+        """处理断开连接"""
+        try:
+            self.selector.unregister(sock)
+        except Exception:
+            pass
+        try:
+            sock.close()
+        except Exception:
+            pass
+        if client_id in self.write_buffers:
+            del self.write_buffers[client_id]
+        self.remove_client(client_id)
+
+    def remove_client(self, client_id):
+        """移除客户端连接"""
+        if client_id not in self.client_sockets:
+            return
+        try:
+            # 从 selector 中注销
+            client_socket = self.client_sockets[client_id]
+            try:
+                self.selector.unregister(client_socket)
+            except Exception as e:
+                self.log(f"从 selector 注销客户端 {client_id} 时出错: {e}")
+
+            # 关闭连接
+            try:
+                if isinstance(client_socket, ssl.SSLSocket):  # 如果是SSL socket
+                    client_socket.shutdown(socket.SHUT_RDWR)  # 安全关闭SSL层
+                client_socket.close()
+            except Exception as e:
+                self.log(f"关闭客户端 {client_id} socket 时出错: {e}")
+
+            # 清理写缓冲区
+            if client_id in self.write_buffers:
+                del self.write_buffers[client_id]
+
+            # 从客户端字典中删除
+            del self.client_sockets[client_id]
+
+            # 通知断开连接回调
+            if self.client_disconnected_callback:
+                self.client_disconnected_callback(client_id)
+
+            self.log(f"客户端 {client_id} 已移除")
+
+        except Exception as e:
+            self.log(f"移除客户端 {client_id} 时出错: {e}")
 class TCPServer(BaseServer):
     """TCP服务器实现"""
 
@@ -227,72 +324,65 @@ class TCPServer(BaseServer):
 
     def start(self):
         """启动TCP服务器"""
-        from .client_handler import handle_client_tcp
         self.setup_server()
-        self.start_message_thread()
         self.running = True
+        # 创建selector实例
+        # 注册服务器socket
+        self.server_socket.setblocking(False)
+        self.selector.register(self.server_socket, selectors.EVENT_READ)
         self.log(f"TCP服务端已启动，监听 {(self.host, self.port)}...")
 
         try:
             while self.running:
-                try:
-                    # 接受客户端连接
-                    client_socket, addr = self.server_socket.accept()
-                    client_id = f"{addr[0]}:{addr[1]}"
-                    self.log(f"接受来自 {addr} 的连接")
+                # 使用selector等待事件
+                events = self.selector.select(timeout=0.1)
+                for key, mask in events:
+                    if key.fileobj is self.server_socket:
+                        # 处理新的客户端连接
+                        client_socket, addr = self.server_socket.accept()
+                        client_id = f"{addr[0]}:{addr[1]}"
+                        self.log(f"接受来自 {addr} 的连接")
 
-                    # 保存客户端socket
-                    self.client_sockets[client_id] = client_socket
-                    client_socket.master = self.master
-                    # 为每个客户端创建新线程处理
-                    client_thread = threading.Thread(
-                        target=handle_client_tcp,
-                        args=(client_socket, addr, self),
-                        name=f"ClientThread-{client_id}",  # 添加线程名称
-                        daemon= True
-                    )
-                    self.active_threads.append(client_thread)
-                    client_thread.start()
+                        # 设置非阻塞模式
+                        client_socket.setblocking(False)
+                        # 注册客户端socket到selector
+                        self.selector.register(client_socket, selectors.EVENT_READ, {"addr": addr})
 
-                    # 通知UI有新客户端连接
-                    if self.client_connected_callback:
-                        self.client_connected_callback(client_socket, addr)
+                        # 保存客户端socket
+                        self.client_sockets[client_id] = client_socket
+                        client_socket.master = self.master
 
-                    # 清理已完成的线程
-                    self.active_threads = [t for t in self.active_threads if t.is_alive()]
+                        # 通知UI更新
+                        if self.client_connected_callback:
+                            self.client_connected_callback(client_socket, addr)
 
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    if self.running:  # 只在仍然运行时记录错误
-                        self.log(f"接受连接时发生错误: {e}")
-                        time.sleep(0.1)
+                    else:
+                        # 处理已连接客户端的数据
+                        sock : socket.socket | ssl.SSLSocket= key.fileobj
+                        data = key.data
+                        addr = data["addr"]
+                        client_id = f"{addr[0]}:{addr[1]}"
 
-        finally:
-            self.shutdown()
-
-    def _send_message_to_client(self, client_id, client_socket, data):
-        """实际发送消息给TCP客户端"""
-        try:
-            if isinstance(data, str):
-                data = data.encode()
-            elif not isinstance(data, bytes):
-                data = str(data).encode()
-
-            client_socket.settimeout(1.0)
-            try:
-                client_socket.sendall(data)
-                self.log(f"成功发送消息到 {client_id}")
-            except socket.timeout:
-                self.log(f"发送消息到 {client_id} 超时")
-                self.remove_client(client_id)
-            except Exception as e:
-                self.log(f"发送消息到 {client_id} 失败: {e}")
-                self.remove_client(client_id)
-            finally:
-                client_socket.settimeout(None)
+                        # 处理读事件
+                        # if mask & selectors.EVENT_READ:
+                        try:
+                            recv_data = sock.recv(1024)
+                            if recv_data:
+                                self.process_message(sock, addr, recv_data)
+                            else:
+                                self.handle_disconnect(sock, client_id)
+                        except (ssl.SSLWantReadError, BlockingIOError):
+                            continue
+                        except Exception as e:
+                            self.handle_disconnect(sock, client_id)
+                        # 处理写事件
+                        # if mask & selectors.EVENT_WRITE:
+                        #     self.handle_write(sock, client_id)
         except Exception as e:
-            self.log(f"处理发送消息时出错: {str(e)}")
+            self.log(f"服务器运行错误: {e}")
+        finally:
+            self.selector.close()
+            self.shutdown()
 
     def remove_client(self, client_id):
         """移除客户端连接"""
@@ -327,11 +417,12 @@ class TLSServer(BaseServer):
         plain_socket.settimeout(self.timeout)
         # 设置最低 TLS 版本为 1.2
         self.ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        self.ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
         # 禁用低版本 TLS
         self.ssl_context.options |= ssl.OP_NO_TLSv1
         self.ssl_context.options |= ssl.OP_NO_TLSv1_1
         # 可选：设置首选加密套件
-        self.ssl_context.set_ciphers('ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256')
+        self.ssl_context.set_ciphers('ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256')
         #启用证书验证：要求客户端提供证书（双向 TLS）
         # self.ssl_context.verify_mode = ssl.CERT_REQUIRED
         # self.ssl_context.load_verify_locations(cafile="ca.crt")
@@ -351,99 +442,84 @@ class TLSServer(BaseServer):
         import ssl
         from .client_handler import handle_client_tls
         self.setup_server()
-        self.start_message_thread()
         self.running = True
+        # 注册服务器socket
+        self.server_socket.setblocking(False)
+        self.selector.register(self.server_socket, selectors.EVENT_READ)
         self.log(f"TLS服务端已启动，监听 {(self.host, self.port)}...")
 
         try:
             while self.running:
+                # 使用selector等待事件
                 try:
-                    # 接受客户端连接
-                    client_socket, addr = self.server_socket.accept()
-                    client_id = f"{addr[0]}:{addr[1]}"
-                    self.log(f"接受来自 {addr} 的连接")
+                    events = self.selector.select(timeout=0.1)
+                    for key, mask in events:
+                        if key.fileobj is self.server_socket:
+                            # 处理新的客户端连接
+                            try:
+                                client_socket, addr = self.server_socket.accept()
+                                client_id = f"{addr[0]}:{addr[1]}"
+                                self.log(f"接受来自 {addr} 的连接")
+                                # TLS握手
+                                client_socket.settimeout(5)
+                                try:
+                                    tls_socket = self.ssl_context.wrap_socket(
+                                        client_socket,
+                                        server_side=True,
+                                        do_handshake_on_connect=True
+                                    )
 
-                    try:
-                        # 直接在这里进行 TLS 握手，而不是在单独的线程中
-                        client_socket.settimeout(1)  # 设置较短的超时时间用于握手
-                        tls_socket = self.ssl_context.wrap_socket(
-                            client_socket,
-                            server_side=True
-                        )
-                        # 验证TLS连接是否成功建立
-                        cipher = tls_socket.cipher()
-                        if not cipher:
-                            raise ssl.SSLError("TLS连接未能建立加密通道")
-                        # 打印TLS连接信息
-                        self.log(f"TLS连接成功建立 - 使用加密套件: {cipher[0]}")
-                        self.log(f"当前连接协议版本 {tls_socket.version()}")
-                        # 恢复原始超时设置
-                        # tls_socket.settimeout(self.timeout)
-                        # tls_socket.settimeout(None) # 永不超时
-                        # 注册客户端套接字
-                        self.register_client_socket(tls_socket, client_id)
-                        tls_socket.master = self.master
-                        # 为每个客户端创建新线程处理
-                        client_thread = threading.Thread(
-                            target=handle_client_tls,
-                            args=(tls_socket, addr, self.ssl_context, self),
-                            name=f"TLSClientThread-{client_id}",  # 添加线程名称
-                            daemon= True
-                        )
-                        self.active_threads.append(client_thread)
-                        client_thread.start()
-                        # 通知UI有新客户端连接
-                        if self.client_connected_callback:
-                                self.client_connected_callback(tls_socket, addr)
-                    except ssl.SSLError as e:
-                        # 捕获 TLS 握手失败
-                        self.log(f"TLS 握手失败，拒绝来自 {addr} 的连接: {e}")
-                        client_socket.close()
-                    except Exception as e:
-                        self.log(f"处理客户端 {addr} 时发生错误: {e}")
-                        client_socket.close()
+                                    # 完成握手后再设置非阻塞
+                                    tls_socket.setblocking(False)
+                                    self.selector.register(tls_socket, selectors.EVENT_READ, {"addr": addr})
+                                    self.register_client_socket(tls_socket, client_id)
+                                    tls_socket.master = self.master
 
-                    # 清理已完成的线程
-                    self.active_threads = [t for t in self.active_threads if t.is_alive()]
+                                    if self.client_connected_callback:
+                                        self.client_connected_callback(tls_socket, addr)
 
-                except socket.timeout:
-                    continue
+                                except ssl.SSLError as e:
+                                    self.log(f"TLS握手失败: {e}")
+                                    client_socket.close()
+                                    continue
+                                except Exception as e:
+                                    self.log(f"处理新连接时出错: {e}")
+                                    client_socket.close()
+                                    continue
+                            except ssl.SSLError as e:
+                                self.log(f"TLS握手失败: {e}")
+
+                        else:
+                            # 处理已连接客户端的数据
+                            sock : socket.socket | ssl.SSLSocket = key.fileobj
+                            data = key.data
+                            addr = data["addr"]
+                            client_id = f"{addr[0]}:{addr[1]}"
+
+                            if mask & selectors.EVENT_READ:
+                                try:
+                                    recv_data = sock.recv(1024)
+                                    if recv_data:
+                                        self.process_message(sock, addr, recv_data)
+                                    else:
+                                        raise ConnectionError("连接已关闭")
+                                except (ssl.SSLWantReadError, BlockingIOError):
+                                    continue
+                                except Exception as e:
+                                    self.log(f"读取数据时出错: {e}")
+                                    self.handle_disconnect(sock, client_id)
+                                    continue
                 except Exception as e:
-                    if self.running:  # 只在仍然运行时记录错误
-                        self.log(f"接受连接时发生错误: {e}")
-                        time.sleep(0.1)
+                    self.log(f"主循环处理错误: {e}")
+                    if not self.running:
+                        break
+                    time.sleep(0.1)  # 避免CPU过载
 
-        finally:
-            self.shutdown()
-
-    def _send_message_to_client(self, client_id, client_socket, data):
-        """实际发送消息给TLS客户端"""
-        try:
-            if isinstance(data, str):
-                data = data.encode()
-            elif not isinstance(data, bytes):
-                data = str(data).encode()
-
-            client_socket.settimeout(1.0)
-            try:
-                total_sent = 0
-                msg_len = len(data)
-                while total_sent < msg_len:
-                    sent = client_socket.send(data[total_sent:])
-                    if sent == 0:
-                        raise BrokenPipeError("连接已关闭")
-                    total_sent += sent
-                self.log(f"成功发送消息到 {client_id}")
-            except (socket.timeout, ssl.SSLError):
-                self.log(f"发送消息到 {client_id} 超时")
-                self.remove_client(client_id)
-            except Exception as e:
-                self.log(f"发送消息到 {client_id} 失败: {e}")
-                self.remove_client(client_id)
-            finally:
-                client_socket.settimeout(None)
         except Exception as e:
-            self.log(f"处理发送消息时出错: {str(e)}")
+            self.log(f"服务器运行错误: {e}")
+        finally:
+            self.selector.close()
+            self.shutdown()
 
     def register_client_socket(self, ssl_socket,client_id):
         """注册客户端SSL套接字"""
@@ -480,3 +556,35 @@ class TLSServer(BaseServer):
 
         if self.client_disconnected_callback:
             self.client_disconnected_callback(client_id)
+
+    def get_cert_paths(self):
+        """获取证书文件路径"""
+        import os
+        cert_dir = os.path.join(os.path.dirname(__file__), "..", "certs")
+        cert_file = os.path.join(cert_dir, "server.crt")
+        key_file = os.path.join(cert_dir, "server.key")
+        return cert_dir, cert_file, key_file
+
+    def load_existing_cert(self):
+        """尝试加载已存在的证书"""
+        try:
+            cert_dir, cert_file, key_file = self.get_cert_paths()
+
+            # 检查证书文件是否存在
+            if not os.path.exists(cert_file):
+                self.log("未找到证书文件")
+                return None
+
+            if not os.path.exists(key_file):
+                self.log("未找到密钥文件")
+                return None
+
+            # 尝试加载证书
+            context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+            self.log("成功加载已存在的证书")
+            return context
+
+        except Exception as e:
+            self.log(f"加载证书失败: {e}")
+            return None

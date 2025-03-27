@@ -8,53 +8,42 @@ from datetime import datetime
 
 
 class LogPanel(ttk.Frame):
-    """日志显示面板"""
-
     def __init__(self, parent):
         super().__init__(parent)
-        self.lock = Lock()
         self._create_widgets()
 
     def _create_widgets(self):
-        # 日志区域标题
-        label_frame = ttk.LabelFrame(self, text="服务器日志")
-        label_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # 创建文本框和滚动条
+        self.log_text = tk.Text(self, wrap=tk.WORD, height=10)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
 
-        # 滚动条
-        scrollbar = ttk.Scrollbar(label_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # 使用网格布局
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
 
-        # 日志文本区域
-        self.log_area = tk.Text(label_frame, height=8, width=60, state=tk.DISABLED)
-        self.log_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # 配置网格权重
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        # 连接滚动条
-        self.log_area.config(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=self.log_area.yview)
+        # 禁用文本框编辑
+        self.log_text.configure(state="disabled")
 
-        # 使用标签设置不同级别日志的颜色
-        self.log_area.tag_config('INFO', foreground='black')
-        self.log_area.tag_config('WARNING', foreground='orange')
-        self.log_area.tag_config('ERROR', foreground='red')
+        # 设置标签绑定，以处理自动滚动
+        self.log_text.tag_configure("INFO", foreground="black")
+        self.log_text.tag_configure("WARNING", foreground="orange")
+        self.log_text.tag_configure("ERROR", foreground="red")
+        self.log_text.tag_configure("DEBUG", foreground="gray")
 
-    def log(self, message, level="INFO"):
+    def add_log(self, message, level="INFO"):
         """添加日志消息"""
-        try:
-            with self.lock:
-                if level not in ["INFO", "WARNING", "ERROR"]:
-                    level = "INFO"
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", message + "\n", level)
+        self.log_text.configure(state="disabled")
+        self.log_text.see("end")
 
-                # 获取当前时间
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                log_line = f"[{timestamp}] [{level}] {message}\n"
-
-                # 添加到日志区域
-                self.log_area.config(state=tk.NORMAL)
-                self.log_area.insert(tk.END, log_line, level)
-                self.log_area.see(tk.END)  # 滚动到最新消息
-                self.log_area.config(state=tk.DISABLED)
-
-                # 打印到控制台
-                print(f"[{level}] {message}")
-        except tk.TclError:
-            pass  # Widget was destroyed
+    def clear(self):
+        """清空日志"""
+        self.log_text.configure(state="normal")
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.configure(state="disabled")

@@ -32,38 +32,52 @@ class Plugin(PluginBase):
         try:
             # ENQ处理
             if data == self.ENQ:
-                self.log("收到 ENQ")
-                self.message_buffer.clear()
-                self.current_frame.clear()
+                # self.log("收到 ENQ")
+                self.message_buffer = []  # 使用赋值而不是clear()
+                self.current_frame = []   # 使用赋值而不是clear()
                 self.expecting_eot = False
                 return self.ACK
 
+            if len(data) == 1:
+                return self.ACK  # 对其他控制字符返回ACK
             # 普通消息处理
             if isinstance(data, bytes) and len(data) > 2:
                 if data.startswith(self.STX):
                     if data.endswith(self.ETX) or data.endswith(self.ETB):
-                        msg_content = data[1:-1].decode('ascii', errors='ignore')
-                        messages = msg_content.split('\r')
-                        self.log(f"收到消息帧: {messages}")
-                        self.current_frame.append(messages)
+                        try:
 
-                        if data.endswith(self.ETX):
-                            self.message_buffer.extend([m for m in self.current_frame if m])
-                            self.current_frame.clear()
-                            self.expecting_eot = True
-
-                        return self.ACK
+                            msg_content = data[1:-1].decode('ascii', errors='ignore')
+                            messages = [m for m in msg_content.split('\r') if m]
+                            self.log(f"收到消息帧: {messages}")
+                            if messages:
+                                self.current_frame = messages.copy()  # 使用深拷贝
+                            if data.endswith(self.ETX):
+                                if any(m.startswith(('H|', 'P|', 'O|', 'Q|', 'L|')) for m in messages):
+                                    self.message_buffer.extend(self.current_frame)
+                                    self.current_frame = []
+                                    self.expecting_eot = True
+                                else:
+                                    return self.NAK
+                            return self.ACK
+                        except Exception as e:
+                            self.log(f"消息解析错误: {e}")
+                            print(f"消息解析错误: {e}")
+                            return self.NAK
 
             # EOT处理
             if data == self.EOT:
                 self.log("收到 EOT")
                 if self.message_buffer and self.expecting_eot:
-                    response = self._process_complete_message()
-                    self.log(f"发送响应: {response}")
-                    # 处理完成后清空缓冲
-                    self.message_buffer.clear()
-                    self.current_frame.clear()
-                    self.expecting_eot = False
+                    try:
+                        response = self._process_complete_message()
+                    except Exception as e:
+                        self.log(f"处理消息出错: {e}")
+                        response = self.NAK
+                    finally:
+                        # 清理状态
+                        self.message_buffer = []
+                        self.current_frame = []
+                        self.expecting_eot = False
                     return response
                 return self.ACK
 
@@ -72,6 +86,10 @@ class Plugin(PluginBase):
 
         except Exception as e:
             self.log(f"处理消息时出错: {str(e)}")
+            print(f"数据处理错误: {e}")
+            self.message_buffer = []
+            self.current_frame = []
+            self.expecting_eot = False
             return self.NAK
 
     def _process_complete_message(self) -> bytes:

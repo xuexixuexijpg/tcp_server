@@ -1,3 +1,4 @@
+import time
 import tkinter as tk
 from tkinter import ttk
 import socket
@@ -5,12 +6,17 @@ import ssl
 import threading
 from datetime import datetime
 
+import select
+
+
 class TlsClientPanel(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
         self.client_socket = None
         self.receive_thread = None
         self.running = False
+        self.send_lock = threading.Lock()
+        self.sending = False
         self._create_widgets()
 
     def _create_widgets(self):
@@ -128,29 +134,51 @@ class TlsClientPanel(ttk.Frame):
                     self.client_socket.close()
                 except:
                     pass
-            self.client_socket = None
-
-            # Create SSL context that trusts all certificates
-            context = ssl.create_default_context()
+                self.client_socket = None
+            # 创建 SSL 上下文
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            # 配置 TLS 版本
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.maximum_version = ssl.TLSVersion.TLSv1_3
+            # 禁用证书验证（仅测试用）
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
+            # 配置密码套件
+            context.set_ciphers('ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256')
 
-            # Create socket and wrap with SSL
-            plain_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            plain_socket.settimeout(5)  # Add timeout
-            self.client_socket = context.wrap_socket(plain_socket)
-
-            # Connect to server
+            # 创建普通 socket
             ip = self.ip_var.get().strip()
             port = int(self.port_var.get().strip())
-            self.client_socket.connect((ip, port))
+            plain_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            plain_socket.settimeout(5)
 
-            # Update GUI in main thread
+            # 先建立 TCP 连接
+            plain_socket.connect((ip, port))
+
+            # 包装 socket 并进行 TLS 握手
+            self.client_socket = context.wrap_socket(
+                plain_socket,
+                server_hostname=ip,
+                do_handshake_on_connect=True
+            )
+            try:
+                self.client_socket.do_handshake()
+            except ssl.SSLError as e:
+                raise ssl.SSLError(f"TLS握手失败: {e}")
+
+            self.client_socket.setblocking(True)
+            self.client_socket.settimeout(5)
+            # 获取并显示 TLS 信息
+            cipher = self.client_socket.cipher()
+            version = self.client_socket.version()
+            self.after(0, lambda: self.log(f"TLS连接成功 - 版本:{version} 加密套件:{cipher[0]}"))
+
+            # 更新 GUI
             self.after(0, self._connect_success)
+        except ssl.SSLError as e:
+            self.after(0, lambda: self._handle_connection_error(f"SSL错误: {str(e)}"))
         except Exception as e:
-            # Update GUI in main thread
-            self.after(0, lambda error=str(e): self._handle_connection_error(error))
-
+            self.after(0, lambda: self._handle_connection_error(str(e)))
     def _connect_success(self):
         self.running = True
         self.connect_btn.config(text="断开", state=tk.NORMAL)
@@ -177,6 +205,7 @@ class TlsClientPanel(ttk.Frame):
 
     def disconnect(self):
         self.running = False
+        self.sending = False
         if self.client_socket:
             try:
                 self.client_socket.shutdown(socket.SHUT_RDWR)
@@ -215,16 +244,26 @@ class TlsClientPanel(ttk.Frame):
     def _receive_messages(self):
         while self.running and self.client_socket:
             try:
+                ready = select.select([self.client_socket], [], [], 0.1)
+                if not ready[0]:
+                    continue
                 data = self.client_socket.recv(1024)
                 if not data:
                     break
-                # Update GUI in main thread
-                self.after(0, lambda d=data: self.log(f"<<< {d.decode()}"))
+                # 对控制字符特殊处理
+                if len(data) == 1 and data[0] in [0x02, 0x03, 0x04, 0x05, 0x06, 0x15, 0x17]:
+                    self.after(0, lambda d=data: self.log(f"<<< {d!r}"))
+                else:
+                    # 普通数据用decode
+                    self.after(0, lambda d=data: self.log(f"<<< {d.decode('ascii', errors='ignore')}"))
+            except ssl.SSLWantReadError:
+                continue
             except socket.timeout:
                 continue
             except Exception as e:
                 if self.running:
-                    self.after(0, lambda: self.log(f"接收错误: {e}"))
+                    error_msg = str(e)  # Capture error message
+                    self.after(0, lambda msg=error_msg: self.log(f"接收错误: {msg}"))
                 break
         # Disconnect in main thread if still running
         if self.running:
@@ -257,18 +296,25 @@ class TlsClientPanel(ttk.Frame):
         if not self.client_socket:
             self.log("未连接到服务器")
             return
-
+        if self.sending:
+            self.log("正在处理上一条消息，请稍后再试")
+            return
         sample_id = self.input_text.get("1.0", tk.END).strip()
         if not sample_id:
             self.log("请输入样本号")
             return
+
+        # 禁用发送按钮
+        self.send_astm_btn.config(state=tk.DISABLED)
+        self.send_btn.config(state=tk.DISABLED)
+        self.sending = True
         threading.Thread(target=self._send_astm_async,
                          args=(sample_id,),
                          daemon=True).start()
     def _send_astm_async(self, sample_id):
         """异步发送ASTM消息"""
         try:
-            # ASTM 控制字符
+            # ASTM 控制字符定义
             ENQ = b'\x05'
             STX = b'\x02'
             ETX = b'\x03'
@@ -284,33 +330,109 @@ class TlsClientPanel(ttk.Frame):
             ]
             frame_data = '\r'.join(message)
 
+            def receive_with_timeout(timeout=5):
+                """带超时的接收函数"""
+                start_time = time.time()
+                while time.time() - start_time < timeout and self.running:
+                    try:
+                        # 使用select检查socket是否可读
+                        ready = select.select([self.client_socket], [], [], 0.1)
+                        if not ready[0]:
+                            continue
+
+                        # 接收完整数据
+                        data = self.client_socket.recv(1024)
+                        if not data:
+                            return None
+
+                        # 记录接收到的数据
+                        self.after(0, lambda d=data: self.log(f"收到响应: {d!r}"))
+                        return data
+
+                    except ssl.SSLWantReadError:
+                        time.sleep(0.01)
+                        continue
+                    except socket.timeout:
+                        continue
+                    except (ConnectionError, ssl.SSLError) as e:
+                        self.after(0, lambda err=e: self.log(f"连接错误: {err}"))
+                        return None
+                    except Exception as e:
+                        self.after(0, lambda err=e: self.log(f"接收错误: {err}"))
+                        return None
+
+                self.after(0, lambda: self.log("接收超时"))
+                return None
+
+            def send_with_retry(data, max_retries=3):
+                """带重试的发送函数"""
+                for _ in range(max_retries):
+                    try:
+                        sent = self.client_socket.send(data)
+                        if sent == len(data):
+                            return True
+                    except (ssl.SSLWantWriteError, BlockingIOError):
+                        time.sleep(0.1)
+                        continue
+                    except Exception as e:
+                        self.after(0, lambda: self.log(f"发送错误: {e}"))
+                        return False
+                return False
+
             # 1. 发送 ENQ
-            self.client_socket.send(ENQ)
+            if not send_with_retry(ENQ):
+                self.after(0, lambda: self.log("发送 ENQ 失败"))
+                return
             self.after(0, lambda: self.log("已发送 ENQ"))
 
             # 2. 等待 ACK
-            response = self.client_socket.recv(1024)
+            response = receive_with_timeout()
+            if response is None:
+                self.after(0, lambda: self.log("未收到响应"))
+                return
+            # 将接收到的数据转换为字节并比较
+            if isinstance(response, str):
+                response = response.encode('ascii')
+
             if response != ACK:
-                self.after(0, lambda: self.log("未收到 ACK，发送取消"))
+                self.after(0, lambda: self.log(f"预期 ACK (\\x06)，实际收到: {response!r}"))
                 return
 
             # 3. 发送数据帧
             frame = STX + frame_data.encode('ascii', errors='ignore') + ETX
-            self.client_socket.send(frame)
+            if not send_with_retry(frame):
+                self.after(0, lambda: self.log("发送数据帧失败"))
+                return
             self.after(0, lambda: self.log(f"已发送查询帧: \n{frame_data}"))
 
-            # 4. 等待 ACK
-            response = self.client_socket.recv(1024)
+            # 4. 等待数据帧 ACK
+            response = receive_with_timeout()
+            if response is None:
+                self.after(0, lambda: self.log("未收到响应"))
+                return
+
+            # 将接收到的数据转换为字节并比较
+            if isinstance(response, str):
+                response = response.encode('ascii')
+
             if response != ACK:
-                self.after(0, lambda: self.log("未收到数据帧 ACK，发送取消"))
+                self.after(0, lambda: self.log(f"预期 ACK (\\x06)，实际收到: {response!r}"))
                 return
 
             # 5. 发送 EOT
-            self.client_socket.send(EOT)
+            if not send_with_retry(EOT):
+                self.after(0, lambda: self.log("发送 EOT 失败"))
+                return
             self.after(0, lambda: self.log("已发送 EOT"))
 
             # 清空输入框
             self.after(0, lambda: self.input_text.delete("1.0", tk.END))
+
         except Exception as e:
-            self.after(0, lambda: self.log(f"发送ASTM消息失败: {str(e)}"))
+            self.after(0, lambda err=e: self.log(f"错误: {str(err)}"))
             self.after(0, self.disconnect)
+        finally:
+            # 重新启用发送按钮
+            self.after(0, lambda: self.send_astm_btn.config(state=tk.NORMAL))
+            self.after(0, lambda: self.send_btn.config(state=tk.NORMAL))
+            self.sending = False
