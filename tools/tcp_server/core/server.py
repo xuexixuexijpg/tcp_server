@@ -8,6 +8,7 @@ import ssl
 from queue import Queue
 
 from tools.tcp_server.core.client_handler import handle_client_tls
+from tools.tcp_server.core.logger import LogManager
 from tools.tcp_server.model.Message import Message
 from tools.tcp_server.plugins.base import PluginManager
 from typing import Union
@@ -41,7 +42,7 @@ class BaseServer:
         self.send_lock = threading.Lock()  # 用于线程安全的客户端操作
         # 添加写缓冲区
         self.write_buffers = {}  # {client_id: [data1, data2, ...]}
-
+        self.log_manager = LogManager()
     def log(self, message):
         """记录日志"""
         print(message)
@@ -166,12 +167,12 @@ class BaseServer:
                 if hasattr(self, 'plugin_manager') and self.plugin_manager.client_plugins.get(client_id):
                     response = self.plugin_manager.process_data(client_id, data, 'incoming')
                     if response is not None:
-                        self.log(f"插件处理结果:{response}")
+                        self.log_manager.log(f"插件处理结果:{response}")
                         self._send_message_to_client(client_id, client_socket, response)
                     else:
-                        self.log("插件未返回数据，跳过发送")
+                        self.log_manager.log("插件未返回数据，跳过发送")
                 else:
-                    self.log(f"没有插件处理消息，返回原数据 {str(data)}")
+                    self.log_manager.log(f"没有插件处理消息，返回原数据 {str(data)}")
                     self._send_message_to_client(client_id, client_socket, data)
             except Exception as e:
                 self.log(f"消息处理错误: {e}")

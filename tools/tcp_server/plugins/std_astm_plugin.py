@@ -30,6 +30,7 @@ class Plugin(PluginBase):
     def process_incoming(self, data: bytes) -> bytes:
         """处理接收到的数据"""
         try:
+            self.log(f"接收到数据: {data!r}")
             # ENQ处理
             if data == self.ENQ:
                 # self.log("收到 ENQ")
@@ -37,32 +38,6 @@ class Plugin(PluginBase):
                 self.current_frame = []   # 使用赋值而不是clear()
                 self.expecting_eot = False
                 return self.ACK
-
-            if len(data) == 1:
-                return self.ACK  # 对其他控制字符返回ACK
-            # 普通消息处理
-            if isinstance(data, bytes) and len(data) > 2:
-                if data.startswith(self.STX):
-                    if data.endswith(self.ETX) or data.endswith(self.ETB):
-                        try:
-
-                            msg_content = data[1:-1].decode('ascii', errors='ignore')
-                            messages = [m for m in msg_content.split('\r') if m]
-                            self.log(f"收到消息帧: {messages}")
-                            if messages:
-                                self.current_frame = messages.copy()  # 使用深拷贝
-                            if data.endswith(self.ETX):
-                                if any(m.startswith(('H|', 'P|', 'O|', 'Q|', 'L|')) for m in messages):
-                                    self.message_buffer.extend(self.current_frame)
-                                    self.current_frame = []
-                                    self.expecting_eot = True
-                                else:
-                                    return self.NAK
-                            return self.ACK
-                        except Exception as e:
-                            self.log(f"消息解析错误: {e}")
-                            print(f"消息解析错误: {e}")
-                            return self.NAK
 
             # EOT处理
             if data == self.EOT:
@@ -81,9 +56,22 @@ class Plugin(PluginBase):
                     return response
                 return self.ACK
 
+            # 普通消息处理
+            if data.startswith(self.STX) and (data.endswith(self.ETX) or data.endswith(self.ETB)):
+                try:
+                    msg_content = data[1:-1].decode('ascii', errors='ignore')
+                    messages = [m for m in msg_content.split('\r') if m]
+                    self.log(f"收到消息帧: {messages}")
+                    if messages:
+                        self.message_buffer.extend(messages)
+                        self.expecting_eot = True
+                    return self.ACK
+                except Exception as e:
+                    self.log(f"消息解析错误: {e}")
+                    return self.NAK
+
             self.log(f"收到无效消息: {data}")
             return self.NAK
-
         except Exception as e:
             self.log(f"处理消息时出错: {str(e)}")
             print(f"数据处理错误: {e}")
@@ -125,7 +113,9 @@ class Plugin(PluginBase):
                     sample_data = fields[2].split('^')
                     if len(sample_data) >= 2:
                         return sample_data[1]
-                    return fields[2] if fields[2] else None
+                    else:
+                        return sample_data[0]
+                    # return fields[2] if fields[2] else None
         except Exception as e:
             self.log(f"提取样本号时出错: {str(e)}")
         return None

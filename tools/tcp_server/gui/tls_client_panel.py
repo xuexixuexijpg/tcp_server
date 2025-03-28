@@ -8,6 +8,8 @@ from datetime import datetime
 
 import select
 
+from tools.tcp_server.core.logger import LogManager
+
 
 class TlsClientPanel(ttk.Frame):
     def __init__(self, parent):
@@ -17,6 +19,7 @@ class TlsClientPanel(ttk.Frame):
         self.running = False
         self.send_lock = threading.Lock()
         self.sending = False
+        self.logger = LogManager()
         self._create_widgets()
 
     def _create_widgets(self):
@@ -211,19 +214,17 @@ class TlsClientPanel(ttk.Frame):
                 self.client_socket.shutdown(socket.SHUT_RDWR)
             except:
                 pass
-            try:
-                self.client_socket.close()
-            except:
-                pass
-            self.client_socket = None
-            # Update GUI
-            self.after(0, self._update_gui_disconnect)
+        try:
+            self.client_socket.close()
+        except:
+            pass
+        self.client_socket = None
+
+        # 使用after_idle代替直接调用
+        self.after_idle(self._update_gui_disconnect)
 
         # Update GUI
-        self.connect_btn.config(text="连接")
-        self.ip_combo.config(state='normal')
-        self.port_entry.config(state='normal')
-        self.log("已断开连接")
+
     def send_message(self):
         if not self.client_socket:
             self.log("未连接到服务器")
@@ -244,28 +245,30 @@ class TlsClientPanel(ttk.Frame):
     def _receive_messages(self):
         while self.running and self.client_socket:
             try:
+                # 使用select避免阻塞
                 ready = select.select([self.client_socket], [], [], 0.1)
                 if not ready[0]:
                     continue
+
                 data = self.client_socket.recv(1024)
                 if not data:
                     break
-                # 对控制字符特殊处理
+
+                # 使用队列而不是直接调用after
                 if len(data) == 1 and data[0] in [0x02, 0x03, 0x04, 0x05, 0x06, 0x15, 0x17]:
-                    self.after(0, lambda d=data: self.log(f"<<< {d!r}"))
+                    self._safe_log(f"<<< {data!r}")
                 else:
-                    # 普通数据用decode
-                    self.after(0, lambda d=data: self.log(f"<<< {d.decode('ascii', errors='ignore')}"))
+                    self._safe_log(f"<<< {data.decode('ascii', errors='ignore')}")
+
             except ssl.SSLWantReadError:
+                time.sleep(0.01)
                 continue
             except socket.timeout:
                 continue
             except Exception as e:
                 if self.running:
-                    error_msg = str(e)  # Capture error message
-                    self.after(0, lambda msg=error_msg: self.log(f"接收错误: {msg}"))
+                    self._safe_log(f"接收错误: {e}")
                 break
-        # Disconnect in main thread if still running
         if self.running:
             self.after(0, self.disconnect)
 
@@ -290,6 +293,11 @@ class TlsClientPanel(ttk.Frame):
         self.ip_combo.config(state='normal')
         self.port_entry.config(state='normal')
         self.log("已断开连接")
+
+    def _safe_log(self, message):
+        """安全的日志记录"""
+        if self.running:
+            self.log(message)
 
     def send_astm_message(self):
         """发送ASTM格式的消息"""
@@ -333,36 +341,33 @@ class TlsClientPanel(ttk.Frame):
             def receive_with_timeout(timeout=5):
                 """带超时的接收函数"""
                 start_time = time.time()
-                while time.time() - start_time < timeout and self.running:
-                    try:
-                        # 使用select检查socket是否可读
+                buffer = bytearray()
+
+                try:
+                    while time.time() - start_time < timeout and self.running:
                         ready = select.select([self.client_socket], [], [], 0.1)
                         if not ready[0]:
+                            # 已有数据则返回
+                            if buffer:
+                                return bytes(buffer)
                             continue
 
-                        # 接收完整数据
-                        data = self.client_socket.recv(1024)
-                        if not data:
-                            return None
+                        chunk = self.client_socket.recv(1024)
+                        if not chunk:
+                            break
 
-                        # 记录接收到的数据
-                        self.after(0, lambda d=data: self.log(f"收到响应: {d!r}"))
-                        return data
+                        buffer.extend(chunk)
 
-                    except ssl.SSLWantReadError:
-                        time.sleep(0.01)
-                        continue
-                    except socket.timeout:
-                        continue
-                    except (ConnectionError, ssl.SSLError) as e:
-                        self.after(0, lambda err=e: self.log(f"连接错误: {err}"))
-                        return None
-                    except Exception as e:
-                        self.after(0, lambda err=e: self.log(f"接收错误: {err}"))
-                        return None
+                        # 对于控制字符，收到1字节就返回
+                        if len(buffer) == 1 and buffer[0] in [0x06, 0x15]:
+                            return bytes(buffer)
 
-                self.after(0, lambda: self.log("接收超时"))
-                return None
+                except (socket.error, ssl.SSLError) as e:
+                    self.after(0, lambda: self.log(f"接收错误: {e}"))
+                    if buffer:
+                        return bytes(buffer)
+
+                return bytes(buffer) if buffer else None
 
             def send_with_retry(data, max_retries=3):
                 """带重试的发送函数"""
