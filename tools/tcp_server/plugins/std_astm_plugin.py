@@ -27,7 +27,7 @@ class Plugin(PluginBase):
         self.current_frame = []
         self.expecting_eot = False
 
-    def process_incoming(self, data: bytes) -> bytes:
+    def process_incoming(self, data: bytes) -> bytes | None:
         """处理接收到的数据"""
         try:
             self.log(f"接收到数据: {data!r}")
@@ -47,14 +47,14 @@ class Plugin(PluginBase):
                         response = self._process_complete_message()
                     except Exception as e:
                         self.log(f"处理消息出错: {e}")
-                        response = self.NAK
+                        response = None
                     finally:
                         # 清理状态
                         self.message_buffer = []
                         self.current_frame = []
                         self.expecting_eot = False
                     return response
-                return self.ACK
+                return self.EOT
 
             # 普通消息处理
             if data.startswith(self.STX) and (data.endswith(self.ETX) or data.endswith(self.ETB)):
@@ -65,22 +65,22 @@ class Plugin(PluginBase):
                     if messages:
                         self.message_buffer.extend(messages)
                         self.expecting_eot = True
-                    return self.ACK
+                    return None
                 except Exception as e:
                     self.log(f"消息解析错误: {e}")
-                    return self.NAK
+                    return None
 
             self.log(f"收到无效消息: {data}")
-            return self.NAK
+            return None
         except Exception as e:
             self.log(f"处理消息时出错: {str(e)}")
             print(f"数据处理错误: {e}")
             self.message_buffer = []
             self.current_frame = []
             self.expecting_eot = False
-            return self.NAK
+            return None
 
-    def _process_complete_message(self) -> bytes:
+    def _process_complete_message(self) -> bytes | None:
         """处理完整的消息序列"""
         try:
             full_message = '\r'.join(self.message_buffer)
@@ -97,7 +97,7 @@ class Plugin(PluginBase):
                         self.log("未能提取到有效的样本号")
                         return self._create_error_response("Invalid sample ID")
             self.log("未找到查询记录")
-            return self.NAK
+            return None
 
         except Exception as e:
             self.log(f"处理完整消息时出错: {str(e)}")
@@ -138,7 +138,8 @@ class Plugin(PluginBase):
             f"P|1||||{sample_id}|||||\r".encode('ascii'),
             f"O|1|{sample_id}||{'^'.join(items)}|||||||N||||||||||||Q\r".encode('ascii'),
             f"L|1|N\r".encode('ascii'),
-            self.ETX
+            self.ETX,
+            self.EOT
         ]
         return b''.join(response)
 
