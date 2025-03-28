@@ -472,35 +472,27 @@ class ServerWindow(BaseWindow):
             return
 
         try:
-            # 记录日志（在UI销毁前）
-            try:
-                self.log("正在停止服务器...")
-            except:
-                pass
-
             # 停止服务器
-            self._cleanup()
+            def do_stop():
+                try:
+                    self._cleanup()
+                    self.server = None
+                    self.server_thread = None
 
-            # 清理资源
-            self.server = None
-            self.server_thread = None
+                    if self.root.winfo_exists():
+                        self.start_button.config(state=tk.NORMAL)
+                        self.stop_button.config(state=tk.DISABLED)
+                        self.ip_combo.config(state=tk.NORMAL)
+                        self.log("服务器已停止")
+                except Exception as e:
+                    print(f"停止服务器时出错: {e}")
 
-            # 如果UI组件仍然存在，更新状态
-            try:
-                if self.root.winfo_exists():
-                    self.start_button.config(state=tk.NORMAL)
-                    self.stop_button.config(state=tk.DISABLED)
-                    self.ip_combo.config(state=tk.NORMAL)
-                    self.log("服务器已停止")
-            except:
-                pass
-            self.log("服务器已停止")
+            # 在主线程中执行停止操作
+            self.root.after(0, do_stop)
+
         except Exception as e:
-            try:
-                if self.root.winfo_exists():
-                    self.log(f"停止服务器时出错: {str(e)}", "ERROR")
-            except:
-                print(f"停止服务器时出错: {str(e)}")
+            if self.root.winfo_exists():
+                self.log(f"停止服务器时出错: {str(e)}", "ERROR")
 
     def on_client_connected(self, client_socket, address):
         """当客户端连接时被调用"""

@@ -37,10 +37,21 @@ class LogPanel(ttk.Frame):
 
     def add_log(self, message, level="INFO"):
         """添加日志消息"""
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", message + "\n", level)
-        self.log_text.configure(state="disabled")
-        self.log_text.see("end")
+        def _do_add_log():
+            try:
+                if self.log_text.winfo_exists():
+                    self.log_text.configure(state="normal")
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    log_text = f"[{current_time}] [{level}] {message}\n"
+                    self.log_text.insert(tk.END, log_text)
+                    self.log_text.configure(state="disabled")
+                    self.log_text.see(tk.END)
+            except tk.TclError:
+                pass  # 忽略窗口已关闭的错误
+
+            # 在主线程中执行UI更新
+        if self.winfo_exists():
+            self.after(0, _do_add_log)
 
     def clear(self):
         """清空日志"""

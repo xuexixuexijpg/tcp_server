@@ -1,17 +1,13 @@
 import os
-import queue
 import selectors
 import socket
+import ssl
 import threading
 import time
-import ssl
-from queue import Queue
 
-from tools.tcp_server.core.client_handler import handle_client_tls
 from tools.tcp_server.core.logger import LogManager
-from tools.tcp_server.model.Message import Message
 from tools.tcp_server.plugins.base import PluginManager
-from typing import Union
+
 
 class BaseServer:
     """服务器基类"""
@@ -19,7 +15,7 @@ class BaseServer:
     def __init__(self, host, port, backlog=5, timeout=1.0,
                  log_callback=None, client_connected_callback=None,
                  client_disconnected_callback=None, message_received_callback=None,
-                 plugin_manager=None
+                 plugin_manager=None, master=None
                  ):
         self.selector = selectors.DefaultSelector()
         self.host = str(host)  # 确保 host 是字符串
@@ -30,24 +26,26 @@ class BaseServer:
         self.running = False
         self.active_threads = []
         self.client_handlers = {}  # 保存客户端地址和处理程序的映射
-
+        self.master = master
         # 回调函数
         self.log_callback = log_callback
         self.client_connected_callback = client_connected_callback
         self.client_disconnected_callback = client_disconnected_callback
         self.message_received_callback = message_received_callback
-        self.plugin_manager =  plugin_manager or PluginManager()
+        self.plugin_manager = plugin_manager or PluginManager()
         # 添加消息队列和发送线程
         self.client_sockets = {}  # 移到基类
         self.send_lock = threading.Lock()  # 用于线程安全的客户端操作
         # 添加写缓冲区
         self.write_buffers = {}  # {client_id: [data1, data2, ...]}
         self.log_manager = LogManager()
+
     def log(self, message):
         """记录日志"""
-        print(message)
-        if self.log_callback:
-            self.log_callback(message)
+        if self.log_callback and self.master:
+            self.master.after(0, lambda: self.log_callback(message))
+        else:
+            print(message)  # 如果没有回调函数，则打印到控制台
 
     def setup_server(self):
         """设置服务器socket"""
@@ -177,7 +175,7 @@ class BaseServer:
             except Exception as e:
                 self.log(f"消息处理错误: {e}")
         except Exception as e:
-                self.log(f"处理消息时出错: {str(e)}")
+            self.log(f"处理消息时出错: {str(e)}")
 
     @staticmethod
     def is_tls_socket(socket_obj):
@@ -203,7 +201,6 @@ class BaseServer:
         except Exception as e:
             self.log(f"广播消息失败: {e}")
         return False
-
 
     def _send_message_to_client(self, client_id, client_socket, data):
         """实际发送消息的方法"""
@@ -311,17 +308,19 @@ class BaseServer:
 
         except Exception as e:
             self.log(f"移除客户端 {client_id} 时出错: {e}")
+
+
 class TCPServer(BaseServer):
     """TCP服务器实现"""
 
     def __init__(self, host, port, backlog=5, timeout=1.0,
                  log_callback=None, client_connected_callback=None,
                  client_disconnected_callback=None, message_received_callback=None,
-                 plugin_manager=None,master=None):
+                 plugin_manager=None, master=None):
         super().__init__(host, port, backlog, timeout,
                          log_callback, client_connected_callback,
-                         client_disconnected_callback, message_received_callback,plugin_manager)
-        self.master = master
+                         client_disconnected_callback,
+                         message_received_callback, plugin_manager, master)
 
     def start(self):
         """启动TCP服务器"""
@@ -359,7 +358,7 @@ class TCPServer(BaseServer):
 
                     else:
                         # 处理已连接客户端的数据
-                        sock : socket.socket | ssl.SSLSocket= key.fileobj
+                        sock: socket.socket | ssl.SSLSocket = key.fileobj
                         data = key.data
                         addr = data["addr"]
                         client_id = f"{addr[0]}:{addr[1]}"
@@ -400,18 +399,18 @@ class TLSServer(BaseServer):
     def __init__(self, host, port, ssl_context, backlog=5, timeout=1.0,
                  log_callback=None, client_connected_callback=None,
                  client_disconnected_callback=None,
-                 message_received_callback=None,plugin_manager=None, master=None):
+                 message_received_callback=None, plugin_manager=None, master=None):
         super().__init__(host, port, backlog, timeout,
                          log_callback, client_connected_callback,
                          client_disconnected_callback,
-                         message_received_callback,plugin_manager)
+                         message_received_callback, plugin_manager, master)
         self.ssl_context = ssl_context
-        self.master = master
+
     def setup_server(self):
         """设置TLS服务器socket"""
         # 先创建普通的socket
         plain_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        #允许端口快速重用
+        # 允许端口快速重用
         plain_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         plain_socket.bind((self.host, self.port))
         plain_socket.listen(self.backlog)
@@ -423,13 +422,13 @@ class TLSServer(BaseServer):
         self.ssl_context.options |= ssl.OP_NO_TLSv1
         self.ssl_context.options |= ssl.OP_NO_TLSv1_1
         # 可选：设置首选加密套件
-        self.ssl_context.set_ciphers('ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256')
-        #启用证书验证：要求客户端提供证书（双向 TLS）
+        self.ssl_context.set_ciphers(
+            'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256')
+        # 启用证书验证：要求客户端提供证书（双向 TLS）
         # self.ssl_context.verify_mode = ssl.CERT_REQUIRED
         # self.ssl_context.load_verify_locations(cafile="ca.crt")
         # 设置验证模式
         # self.ssl_context.verify_mode = ssl.CERT_OPTIONAL  # 或使用 CERT_REQUIRED 强制要求客户端证书
-
 
         # 不需要在这里包装SSL，接受连接后再包装
         self.server_socket = plain_socket
@@ -438,10 +437,10 @@ class TLSServer(BaseServer):
         #     server_side=True,
         #     do_handshake_on_connect=True  # 连接时立即进行握手
         # )
+
     def start(self):
         """启动TLS服务器"""
         import ssl
-        from .client_handler import handle_client_tls
         self.setup_server()
         self.running = True
         # 注册服务器socket
@@ -492,7 +491,7 @@ class TLSServer(BaseServer):
 
                         else:
                             # 处理已连接客户端的数据
-                            sock : socket.socket | ssl.SSLSocket = key.fileobj
+                            sock: socket.socket | ssl.SSLSocket = key.fileobj
                             data = key.data
                             addr = data["addr"]
                             client_id = f"{addr[0]}:{addr[1]}"
@@ -522,7 +521,7 @@ class TLSServer(BaseServer):
             self.selector.close()
             self.shutdown()
 
-    def register_client_socket(self, ssl_socket,client_id):
+    def register_client_socket(self, ssl_socket, client_id):
         """注册客户端SSL套接字"""
         import ssl
         # 验证是否为有效的 SSL 套接字

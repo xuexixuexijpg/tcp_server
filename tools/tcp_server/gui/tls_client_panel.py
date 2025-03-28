@@ -1,3 +1,4 @@
+import random
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -166,8 +167,9 @@ class TlsClientPanel(ttk.Frame):
             )
             try:
                 self.client_socket.do_handshake()
-            except ssl.SSLError as e:
-                raise ssl.SSLError(f"TLS握手失败: {e}")
+            except ssl.SSLError as ssl_err:
+                self.after(0, self._connect_error, f"TLS握手失败: {ssl_err}")
+                return
 
             self.client_socket.setblocking(True)
             self.client_socket.settimeout(5)
@@ -178,10 +180,12 @@ class TlsClientPanel(ttk.Frame):
 
             # 更新 GUI
             self.after(0, self._connect_success)
-        except ssl.SSLError as e:
-            self.after(0, lambda: self._handle_connection_error(f"SSL错误: {str(e)}"))
-        except Exception as e:
-            self.after(0, lambda: self._handle_connection_error(str(e)))
+        except ssl.SSLError as ssl_err:
+            error_msg = f"SSL错误: {ssl_err}"
+            self.after(0, self._connect_error, error_msg)
+        except Exception as err:
+            error_msg = str(err)
+            self.after(0, self._connect_error, error_msg)
     def _connect_success(self):
         self.running = True
         self.connect_btn.config(text="断开", state=tk.NORMAL)
@@ -221,7 +225,7 @@ class TlsClientPanel(ttk.Frame):
         self.client_socket = None
 
         # 使用after_idle代替直接调用
-        self.after_idle(self._update_gui_disconnect)
+        self.after(0,self._update_gui_disconnect)
 
         # Update GUI
 
@@ -242,6 +246,19 @@ class TlsClientPanel(ttk.Frame):
             self.log(f"发送失败: {e}")
             self.disconnect()
 
+    def _safe_update_gui(self, func):
+        """安全地在主线程中执行GUI更新"""
+        try:
+            if self.winfo_exists():
+                if isinstance(func, str):
+                    # 如果是字符串，则作为消息记录
+                    self.after(0, lambda: self.log(func))
+                else:
+                    # 如果是函数，则执行函数
+                    self.after(0, func)
+        except tk.TclError:
+            pass
+
     def _receive_messages(self):
         while self.running and self.client_socket:
             try:
@@ -256,9 +273,9 @@ class TlsClientPanel(ttk.Frame):
 
                 # 使用队列而不是直接调用after
                 if len(data) == 1 and data[0] in [0x02, 0x03, 0x04, 0x05, 0x06, 0x15, 0x17]:
-                    self._safe_log(f"<<< {data!r}")
+                    self._safe_update_gui(f"<<< {data!r}")
                 else:
-                    self._safe_log(f"<<< {data.decode('ascii', errors='ignore')}")
+                    self._safe_update_gui(f"<<< {data.decode('ascii', errors='ignore')}")
 
             except ssl.SSLWantReadError:
                 time.sleep(0.01)
@@ -267,7 +284,7 @@ class TlsClientPanel(ttk.Frame):
                 continue
             except Exception as e:
                 if self.running:
-                    self._safe_log(f"接收错误: {e}")
+                    self._safe_update_gui(f"接收错误: {e}")
                 break
         if self.running:
             self.after(0, self.disconnect)
@@ -289,10 +306,17 @@ class TlsClientPanel(ttk.Frame):
 
     def _update_gui_disconnect(self):
         """Update GUI elements after disconnect"""
-        self.connect_btn.config(text="连接", state=tk.NORMAL)
-        self.ip_combo.config(state='normal')
-        self.port_entry.config(state='normal')
-        self.log("已断开连接")
+        try:
+            if self.connect_btn:
+                self.connect_btn.config(text="连接", state=tk.NORMAL)
+            if self.ip_combo:
+                self.ip_combo.config(state='normal')
+            if self.port_entry:
+                self.port_entry.config(state='normal')
+            self.log("已断开连接")
+        except tk.TclError:
+            # 窗口可能已经关闭
+            pass
 
     def _safe_log(self, message):
         """安全的日志记录"""
@@ -403,28 +427,42 @@ class TlsClientPanel(ttk.Frame):
                 self.after(0, lambda: self.log(f"预期 ACK (\\x06)，实际收到: {response!r}"))
                 return
 
-            # 3. 发送数据帧
-            frame = STX + frame_data.encode('ascii', errors='ignore') + ETX
-            if not send_with_retry(frame):
-                self.after(0, lambda: self.log("发送数据帧失败"))
-                return
-            self.after(0, lambda: self.log(f"已发送查询帧: \n{frame_data}"))
+            # 3. 随机选择发送模式：完整帧或分帧发送
+            is_split_frame = random.choice([True, False])
+            self.after(0, lambda: self.log(f"选择{'分帧' if is_split_frame else '完整帧'}发送模式"))
 
-            # 4. 等待数据帧 ACK
-            response = receive_with_timeout()
-            if response is None:
-                self.after(0, lambda: self.log("未收到响应"))
-                return
+            if is_split_frame:
+                # 分帧发送
+                # 3.1 发送STX
+                if not send_with_retry(STX):
+                    self.after(0, lambda: self.log("发送 STX 失败"))
+                    return
+                self.after(0, lambda: self.log("已发送 STX"))
+                time.sleep(0.1)
 
-            # 将接收到的数据转换为字节并比较
-            if isinstance(response, str):
-                response = response.encode('ascii')
+                # 3.2 发送消息内容
+                content = frame_data.encode('ascii', errors='ignore')
+                if not send_with_retry(content):
+                    self.after(0, lambda: self.log("发送消息内容失败"))
+                    return
+                self.after(0, lambda: self.log(f"已发送消息内容: \n{frame_data}"))
+                time.sleep(0.1)
 
-            if response != ACK:
-                self.after(0, lambda: self.log(f"预期 ACK (\\x06)，实际收到: {response!r}"))
-                return
-
-            # 5. 发送 EOT
+                # 3.3 发送ETX
+                if not send_with_retry(ETX):
+                    self.after(0, lambda: self.log("发送 ETX 失败"))
+                    return
+                self.after(0, lambda: self.log("已发送 ETX"))
+                time.sleep(0.1)
+            else:
+                # 完整帧发送
+                frame = STX + frame_data.encode('ascii', errors='ignore') + ETX
+                if not send_with_retry(frame):
+                    self.after(0, lambda: self.log("发送数据帧失败"))
+                    return
+                self.after(0, lambda: self.log(f"已发送完整帧: \n{frame_data}"))
+                time.sleep(0.1)
+            # 4. 直接发送 EOT，无需等待ACK
             if not send_with_retry(EOT):
                 self.after(0, lambda: self.log("发送 EOT 失败"))
                 return
@@ -432,7 +470,6 @@ class TlsClientPanel(ttk.Frame):
 
             # 清空输入框
             self.after(0, lambda: self.input_text.delete("1.0", tk.END))
-
         except Exception as e:
             self.after(0, lambda err=e: self.log(f"错误: {str(err)}"))
             self.after(0, self.disconnect)
