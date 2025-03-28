@@ -13,7 +13,7 @@ class Plugin(PluginBase):
 
     def __init__(self):
         # 测试项目映射表
-        self.test_items = ["Na", "ALT", "AST", "HGB", "WBC", "K", "CRP", "PCT"]
+        self.test_items = ["Na", "ALT", "AST", "Cl", "K"]
         # ASTM 控制字符
         self.ENQ = b'\x05'  # 询问
         self.ACK = b'\x06'  # 确认
@@ -181,12 +181,18 @@ class Plugin(PluginBase):
         response = [
             self.STX,
             f"H|\\^&|||Host^1|||||||||{now}\r".encode('ascii'),
-            f"P|1||||{sample_id}|||||\r".encode('ascii'),
-            f"O|1|{sample_id}||{'^'.join(items)}|||||||N||||||||||||Q\r".encode('ascii'),
+            f"P|1||||{sample_id}|||||\r".encode('ascii')
+        ]
+        # 为每个项目创建单独的O字段
+        for seq, item in enumerate(items, 1):
+            # 使用项目代码作为结果字段，后缀R表示结果字段
+            response.append(f"O|{seq}|{sample_id}||^^^{item}|R\r".encode('ascii'))
+
+        response.extend([
             f"L|1|N\r".encode('ascii'),
             self.ETX,
             self.EOT
-        ]
+        ])
         return b''.join(response)
 
     def _create_error_response(self, error_msg):
