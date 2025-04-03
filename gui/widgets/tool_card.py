@@ -13,6 +13,18 @@ class ToolCard(tk.Frame):
             bg="#f0f0f0"
         )
 
+        # 绑定鼠标滚轮事件
+        self.bind("<MouseWheel>", self._propagate_mousewheel)      # Windows
+        self.bind("<Button-4>", self._propagate_mousewheel)        # Linux
+        self.bind("<Button-5>", self._propagate_mousewheel)        # Linux
+
+        # 为所有子组件也绑定事件
+        for child in self.winfo_children():
+            child.bind("<MouseWheel>", self._propagate_mousewheel)
+            child.bind("<Button-4>", self._propagate_mousewheel)
+            child.bind("<Button-5>", self._propagate_mousewheel)
+
+
         self.grid_propagate(False)
         self.pack_propagate(False)
 
@@ -80,3 +92,16 @@ class ToolCard(tk.Frame):
             self.content_frame.configure(bg=new_bg)
             for widget in self.content_frame.winfo_children():
                 widget.configure(bg=new_bg)
+
+
+
+    def _propagate_mousewheel(self, event):
+        """将滚轮事件传播到父组件"""
+        parent = self.master
+        while parent:
+            if isinstance(parent, tk.Canvas):  # 直接检查是否为Canvas实例
+                delta = -1 if event.num == 4 or event.delta > 0 else 1
+                parent.yview_scroll(delta, "units")
+                break
+            parent = parent.master
+        return "break"

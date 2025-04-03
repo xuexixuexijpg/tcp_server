@@ -1,16 +1,19 @@
 import os
 import sys
-from tkinter import ttk
 import tkinter as tk
+import uuid
+from tkinter import ttk
 
+from gui.qt.qt_imports import qt_app
+from gui.widgets.tool_card import ToolCard
 from tools.lottie_converter.gui.converter_window import ConverterWindow
 from tools.tcp_server.gui.server_window import ServerWindow
-from gui.widgets.tool_card import ToolCard
-import uuid
-import math
+from tools.xml.gui.xml_window import XMLConverterWindow
+
 
 class MainWindow:
     def __init__(self):
+        # 初始化Qt应用(如果还没有初始化)
         self.root = tk.Tk()
         self.root.title("Multi-Tool Suite")
         self.root.geometry("800x600")
@@ -37,8 +40,15 @@ class MainWindow:
 
         # 绑定鼠标滚轮事件
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)  # Windows
-        self.canvas.bind("<Button-4>", self._on_mousewheel)    # Linux
-        self.canvas.bind("<Button-5>", self._on_mousewheel)    # Linux
+        self.canvas.bind("<Button-4>", self._on_mousewheel)  # Linux
+        self.canvas.bind("<Button-5>", self._on_mousewheel)  # Linux
+
+        self.scroll_frame.bind("<MouseWheel>", self._on_mousewheel)  # Windows
+        self.scroll_frame.bind("<Button-4>", self._on_mousewheel)  # Linux
+        self.scroll_frame.bind("<Button-5>", self._on_mousewheel)  # Linux
+
+        # 绑定所有子组件的滚轮事件
+        self._bind_mousewheel_to_children(self.scroll_frame)
 
         # 创建滚动窗口
         self.canvas_window = self.canvas.create_window((0, 0), window=self.scroll_frame, anchor="nw")
@@ -55,10 +65,13 @@ class MainWindow:
 
     def _on_mousewheel(self, event):
         """处理鼠标滚轮事件"""
-        if event.num == 4 or event.delta > 0:
-            self.canvas.yview_scroll(-1, "units")
-        elif event.num == 5 or event.delta < 0:
-            self.canvas.yview_scroll(1, "units")
+        # 定义滚动单位
+        scroll_amount = -1 if (event.num == 4 or event.delta > 0) else 1
+        # 使用yview_scroll进行滚动
+        try:
+            self.canvas.yview_scroll(scroll_amount, "units")
+        except tk.TclError:
+            pass  # 忽略可能的滚动错误
 
     def _create_tool_cards(self):
         tools = [
@@ -73,13 +86,19 @@ class MainWindow:
                 "description": "将资源转换为Lottie格式，支持格式见lottie-py",
                 "callback": self._open_gif_converter,
                 "icon_path": self._get_resource_path("resources/images/icons/tool_an.png")
+            },
+            {
+                "title": "XML转换",
+                "description": "XML加解密/XML-EXCEL互转",
+                "callback": self._open_xml_window,
+                "icon_path": self._get_resource_path("resources/images/icons/tool_xml.png")
             }
         ]
 
         # 添加示例工具
         for i in range(3):
             tools.append({
-                "title": f"Tool {i+1}",
+                "title": f"Tool {i + 1}",
                 "description": "Coming soon...",
                 "callback": lambda: print("Tool not implemented"),
                 "icon_path": self._get_resource_path("resources/images/icons/tool_default.png")
@@ -134,13 +153,12 @@ class MainWindow:
         window_id = str(uuid.uuid4())
         # 计算窗口序号
         window_number = len(self.tool_windows['tcp_server']) + 1
-        server_window = ServerWindow(master=self.root,window_number=window_number)  # 传入主窗口作为master
+        server_window = ServerWindow(master=self.root, window_number=window_number)  # 传入主窗口作为master
         self.tool_windows['tcp_server'].append((window_id, server_window))
         # 相对于主窗口定位新窗口
         x = self.root.winfo_x() + 50 + len(self.tool_windows['tcp_server']) * 30
         y = self.root.winfo_y() + 50 + len(self.tool_windows['tcp_server']) * 30
         server_window.root.geometry(f"+{x}+{y}")
-
 
     def _open_gif_converter(self):
         """打开GIF转换器窗口"""
@@ -154,6 +172,26 @@ class MainWindow:
         y = self.root.winfo_y() + 50 + len(self.tool_windows['gif_converter']) * 30
         converter_window.root.geometry(f"+{x}+{y}")
 
+    def _open_xml_window(self):
+        """打开XML转换器窗口"""
+        window_id = str(uuid.uuid4())
+        window_number = len(self.tool_windows.get('xml_converter', [])) + 1
+
+        # 初始化xml_converter键(如果不存在)
+        if 'xml_converter' not in self.tool_windows:
+            self.tool_windows['xml_converter'] = []
+
+        # 创建Qt版本的XML转换器窗口
+        xml_window = XMLConverterWindow(window_number=window_number)
+        self.tool_windows['xml_converter'].append((window_id, xml_window))
+
+        # 计算新窗口位置(相对于主窗口)
+        x = self.root.winfo_x() + 50 + len(self.tool_windows['xml_converter']) * 30
+        y = self.root.winfo_y() + 50 + len(self.tool_windows['xml_converter']) * 30
+
+        # 设置Qt窗口位置
+        xml_window.window.move(x, y)
+
     def center_window(self):
         """使窗口在屏幕中居中显示"""
         self.root.update_idletasks()
@@ -163,6 +201,23 @@ class MainWindow:
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'{width}x{height}+{x}+{y}')
 
+    def _bind_mousewheel_to_children(self, widget):
+        """递归绑定所有子组件的鼠标滚轮事件"""
+        widget.bind("<MouseWheel>", self._on_mousewheel)  # Windows
+        widget.bind("<Button-4>", self._on_mousewheel)  # Linux
+        widget.bind("<Button-5>", self._on_mousewheel)  # Linux
+
+        for child in widget.winfo_children():
+            self._bind_mousewheel_to_children(child)
+
     def run(self):
         """运行主窗口"""
+
+        def process_events():
+            """处理Qt事件"""
+            qt_app.process_events()
+            self.root.after(10, process_events)
+
+        # 启动事件处理
+        process_events()
         self.root.mainloop()

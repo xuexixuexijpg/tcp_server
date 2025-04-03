@@ -17,4 +17,13 @@ pyperclip>=1.8.2
 pefile; sys_platform == 'win32'  # Windows PE文件支持
 setuptools  # 一些 PyInstaller 功能可能需要
 
+cryptography>=39.0.0
 
+# Qt GUI依赖
+PyQt6>=6.5.0
+PyQt6-Qt6>=6.5.0
+PyQt6-sip>=13.5.0
+
+# 可选的Qt工具
+# PyQt6-WebEngine>=6.5.0  # 如果需要web渲染
+# PyQt6-Charts>=6.5.0    # 如果需要图表功能

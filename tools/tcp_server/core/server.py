@@ -444,7 +444,7 @@ class TLSServer(BaseServer):
         self.setup_server()
         self.running = True
         # 注册服务器socket
-        self.server_socket.setblocking(False)
+        # self.server_socket.setblocking(False)
         self.selector.register(self.server_socket, selectors.EVENT_READ)
         self.log(f"TLS服务端已启动，监听 {(self.host, self.port)}...")
 
@@ -461,14 +461,14 @@ class TLSServer(BaseServer):
                                 client_id = f"{addr[0]}:{addr[1]}"
                                 self.log(f"接受来自 {addr} 的连接")
                                 # TLS握手
-                                client_socket.settimeout(5)
+                                # client_socket.settimeout(5)
                                 try:
                                     tls_socket = self.ssl_context.wrap_socket(
                                         client_socket,
                                         server_side=True,
-                                        do_handshake_on_connect=True
+                                        do_handshake_on_connect=False
                                     )
-
+                                    tls_socket.do_handshake()  # 执行握手
                                     # 完成握手后再设置非阻塞
                                     tls_socket.setblocking(False)
                                     self.selector.register(tls_socket, selectors.EVENT_READ, {"addr": addr})

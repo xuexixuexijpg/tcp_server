@@ -1,9 +1,10 @@
-name: Build and Release
+name: Build and Release Qt Integration
 
 on:
   push:
-    branches:
-      - master
+    branches: [ feature/qt-integration ]
+  pull_request:
+    branches: [ feature/qt-integration ]
   workflow_dispatch:
 
 jobs:
@@ -15,6 +16,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          ref: feature/qt-integration  # 确保检出正确的分支
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -28,12 +31,15 @@ jobs:
           pip install -r requirements.txt
           pip install "importlib-metadata>=4.13.0"
           pip install pyinstaller pywin32 winshell
+          pip install PyQt6
 
-      - name: Delete existing releases
+      - name: Delete existing releases from this branch
         uses: dev-drprasad/delete-older-releases@v0.2.1
         with:
           keep_latest: 0
           delete_tags: true
+          # 只删除这个分支的发布
+          delete_tag_pattern: ^qt-integration-v
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -41,7 +47,7 @@ jobs:
         run: |
           python build_exe.py
           cd release
-          for %%f in (*.zip) do ren "%%f" "tool-list.zip"
+          for %%f in (*.zip) do ren "%%f" "tool-list-qt.zip"
         shell: cmd
         env:
           PYTHONIOENCODING: utf-8
@@ -50,25 +56,25 @@ jobs:
       - name: Generate version
         id: version
         run: |
-          echo "build_version=v$(date +'%Y%m%d.%H%M')" >> $GITHUB_OUTPUT
+          echo "build_version=qt-integration-v$(date +'%Y%m%d.%H%M')" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.build_version }}
-          name: Tool List ${{ steps.version.outputs.build_version }}
+          name: Qt Integration Build ${{ steps.version.outputs.build_version }}
           body: |
-            Automated build from master branch
+            Qt Integration Branch Build
 
             Build Time: ${{ github.event.repository.updated_at }}
             Commit: ${{ github.sha }}
-            Branch: ${{ github.ref_name }}
+            Branch: feature/qt-integration
 
             **Changes:**
             ${{ github.event.head_commit.message }}
-          files: release/tool-list.zip
+          files: release/tool-list-qt.zip
           draft: false
-          prerelease: false
+          prerelease: true  # 标记为预发布版本
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
