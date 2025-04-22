@@ -111,7 +111,7 @@ class ServerWindow(BaseWindow):
         self.ip_combo.bind("<<ComboboxSelected>>", self._on_ip_selected)
 
         ttk.Label(config_frame, text="端口:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=5)
-        self.port_var = tk.StringVar(value="8080")
+        self.port_var = tk.StringVar(value="8222")
         port_entry = ttk.Entry(config_frame, textvariable=self.port_var, width=10)
         port_entry.grid(row=0, column=3, sticky=tk.W, padx=5, pady=5)
 

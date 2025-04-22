@@ -7,6 +7,7 @@ pywin32; sys_platform == 'win32'  # Windows 特定依赖
 # 加密和安全依赖
 pyOpenSSL>=23.0.0
 cryptography>=39.0.0
+cve-bin-tool>=3.4.0  # CVE 二进制文件扫描工具
 
 protobuf>=3.19.0
 #netifaces>=0.11.0

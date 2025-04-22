@@ -5,6 +5,7 @@ import tkinter as tk
 
 from tools.lottie_converter.gui.converter_window import ConverterWindow
 from tools.tcp_server.gui.server_window import ServerWindow
+from tools.cve_scanner.gui.scanner_window import ScannerWindow
 from gui.widgets.tool_card import ToolCard
 import uuid
 import math
@@ -17,7 +18,8 @@ class MainWindow:
         self.root.resizable(False, False)
         self.tool_windows = {
             'tcp_server': [],
-            'gif_converter': []
+            'gif_converter': [],
+            'cve_scanner': []
         }
         self._create_widgets()
         self.center_window()
@@ -73,11 +75,17 @@ class MainWindow:
                 "description": "将资源转换为Lottie格式，支持格式见lottie-py",
                 "callback": self._open_gif_converter,
                 "icon_path": self._get_resource_path("resources/images/icons/tool_an.png")
+            },
+            {
+                "title": "CVE漏洞扫描",
+                "description": "扫描二进制文件中的已知CVE漏洞",
+                "callback": self._open_cve_scanner,
+                "icon_path": self._get_resource_path("resources/images/icons/tool_default.png")
             }
         ]
 
         # 添加示例工具
-        for i in range(3):
+        for i in range(2):  # 减少一个示例工具，因为已添加了新的CVE扫描工具
             tools.append({
                 "title": f"Tool {i+1}",
                 "description": "Coming soon...",
@@ -141,7 +149,6 @@ class MainWindow:
         y = self.root.winfo_y() + 50 + len(self.tool_windows['tcp_server']) * 30
         server_window.root.geometry(f"+{x}+{y}")
 
-
     def _open_gif_converter(self):
         """打开GIF转换器窗口"""
         window_id = str(uuid.uuid4())
@@ -153,6 +160,18 @@ class MainWindow:
         x = self.root.winfo_x() + 50 + len(self.tool_windows['gif_converter']) * 30
         y = self.root.winfo_y() + 50 + len(self.tool_windows['gif_converter']) * 30
         converter_window.root.geometry(f"+{x}+{y}")
+
+    def _open_cve_scanner(self):
+        """打开CVE扫描工具窗口"""
+        window_id = str(uuid.uuid4())
+        window_number = len(self.tool_windows['cve_scanner']) + 1
+        scanner_window = ScannerWindow(master=self.root, window_number=window_number)
+        self.tool_windows['cve_scanner'].append((window_id, scanner_window))
+
+        # 相对于主窗口定位新窗口
+        x = self.root.winfo_x() + 50 + len(self.tool_windows['cve_scanner']) * 30
+        y = self.root.winfo_y() + 50 + len(self.tool_windows['cve_scanner']) * 30
+        scanner_window.root.geometry(f"+{x}+{y}")
 
     def center_window(self):
         """使窗口在屏幕中居中显示"""

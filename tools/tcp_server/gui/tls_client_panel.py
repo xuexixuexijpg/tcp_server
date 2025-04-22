@@ -44,7 +44,7 @@ class TlsClientPanel(ttk.Frame):
 
         # Port
         ttk.Label(settings_frame, text="端口:").grid(row=0, column=2, padx=5, pady=5)
-        self.port_var = tk.StringVar(value="8080")
+        self.port_var = tk.StringVar(value="8222")
         self.port_entry = ttk.Entry(settings_frame, textvariable=self.port_var, width=10)
         self.port_entry.grid(row=0, column=3, padx=5, pady=5)
 
