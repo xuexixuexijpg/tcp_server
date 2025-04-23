@@ -4,7 +4,18 @@ on:
   push:
     branches:
       - master
+  release:
+    types: [published, created]
   workflow_dispatch:
+    inputs:
+      update_dependencies:
+        description: '更新依赖到最新版本'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
   build:
@@ -22,17 +33,39 @@ jobs:
           python-version: '3.13.2'
           cache: pip
 
+      - name: Update dependencies to latest version
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.update_dependencies == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-upgrader
+          pip-upgrade requirements.txt
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add requirements.txt
+          git commit -m "Update dependencies to latest versions" || echo "No changes to commit"
+          git push || echo "No changes to push"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install "importlib-metadata>=4.13.0"
           pip install pyinstaller pywin32 winshell
+          pip install cve-bin-tool
+
+      - name: Install additional Windows utilities
+        run: |
+          # 使用Chocolatey安装MSYS2
+          choco install -y msys2
+          # 使用MSYS2安装binutils工具
+          C:\tools\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-x86_64-binutils"
+          # 添加到PATH
+          echo "C:\tools\msys64\mingw64\bin" | Out-File -Append -FilePath $env:GITHUB_PATH
 
       - name: Delete existing releases
         uses: dev-drprasad/delete-older-releases@v0.2.1
         with:
-          keep_latest: 0
+          keep_latest: 2  # 保留最新的2个版本
           delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,6 +97,9 @@ jobs:
             Build Time: ${{ github.event.repository.updated_at }}
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref_name }}
+
+            **依赖状态:**
+            ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.update_dependencies == 'true' && '✅ 已更新到最新版本' || '⚙️ 使用当前依赖版本' }}
 
             **Changes:**
             ${{ github.event.head_commit.message }}
