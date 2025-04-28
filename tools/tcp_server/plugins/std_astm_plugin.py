@@ -133,7 +133,7 @@ class Plugin(PluginBase):
                 # 验证消息格式
                 if not messages:
                     self.log("空消息帧")
-                    return self.NAK
+                    return None
 
                 # 处理每条消息
                 for msg in messages:
@@ -142,7 +142,7 @@ class Plugin(PluginBase):
                         self.expecting_eot = True
                     else:
                         self.log(f"无效消息格式: {msg}")
-                        return self.NAK
+                        return self.None
 
                 # 重置帧缓冲区
                 self.frame_buffer = bytearray()
@@ -150,12 +150,12 @@ class Plugin(PluginBase):
 
                 return self.ACK
 
-            return self.NAK
+            return self.None
 
         except Exception as e:
             self.log(f"处理帧数据出错: {e}")
             self._reset_all_buffers()
-            return self.NAK
+            return self.None
 
     def _reset_all_buffers(self):
         """重置所有缓冲区和状态"""
